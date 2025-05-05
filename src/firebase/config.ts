@@ -1,5 +1,5 @@
-// IMPORTANT: Ensure your Firebase project configuration is set in .env.local
-// These variables are read during the build process.
+// IMPORTANT: Ensure your Firebase project configuration is set in .env
+// These variables are read during the build process and automatically available client-side.
 export const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
@@ -9,12 +9,11 @@ export const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Basic validation to ensure environment variables are loaded
+// Basic validation to ensure essential environment variables are loaded
 if (!firebaseConfig.apiKey || !firebaseConfig.authDomain || !firebaseConfig.projectId) {
   console.error(
-    'Firebase configuration is missing or incomplete. Please check your .env.local file.'
+    'Essential Firebase configuration (apiKey, authDomain, projectId) is missing or incomplete. Please check your .env file.'
   );
   // Optionally, throw an error or provide default values for development
-  // throw new Error('Firebase configuration is missing or incomplete.');
+  // throw new Error('Essential Firebase configuration is missing or incomplete.');
 }
-
