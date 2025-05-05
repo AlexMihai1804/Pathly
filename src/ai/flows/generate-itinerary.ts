@@ -20,15 +20,17 @@ const PlannedVisitInputSchema = z.object({
     // Consider adding estimated duration or opening hours if available
 });
 
-export const GenerateItineraryInputSchema = z.object({
+// Keep internal schema definition but do not export it
+const GenerateItineraryInputSchema = z.object({
   destination: z.string().describe('The main vacation destination city or region.'),
   dates: z.string().describe('The vacation dates (e.g., "July 10th - July 20th, 2024").'),
   plannedVisits: z.array(PlannedVisitInputSchema).min(1).describe('List of locations the user wants to visit.'),
   // preferences: z.string().optional().describe('Optional user preferences (e.g., pace, budget, specific interests not captured in visits).'),
 });
-export type GenerateItineraryInput = z.infer<typeof GenerateItineraryInputSchema>;
+export type GenerateItineraryInput = z.infer<typeof GenerateItineraryInputSchema>; // Export type
 
-export const GenerateItineraryOutputSchema = z.object({
+// Keep internal schema definition but do not export it
+const GenerateItineraryOutputSchema = z.object({
   days: z
     .record(
       z.string().describe('Day label (e.g., "Day 1", "July 10th")'),
@@ -36,12 +38,12 @@ export const GenerateItineraryOutputSchema = z.object({
     )
     .describe('An object where keys are day labels and values are arrays of itinerary steps.'),
 });
-export type GenerateItineraryOutput = z.infer<typeof GenerateItineraryOutputSchema>;
+export type GenerateItineraryOutput = z.infer<typeof GenerateItineraryOutputSchema>; // Export type
 
 
 // --- Public Flow Function ---
 
-export async function generateItinerary(input: GenerateItineraryInput): Promise<GenerateItineraryOutput> {
+export async function generateItinerary(input: GenerateItineraryInput): Promise<GenerateItineraryOutput> { // Export async function
     // Basic validation before calling the flow
     const validation = GenerateItineraryInputSchema.safeParse(input);
     if (!validation.success) {
@@ -94,7 +96,7 @@ const prompt = ai.definePrompt({
 });
 
 
-const generateItineraryFlow = ai.defineFlow<
+const generateItineraryFlow = ai.defineFlow< // Do not export the flow itself
   typeof GenerateItineraryInputSchema,
   typeof GenerateItineraryOutputSchema
 >(
