@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Heart, Plus, MapPin, Filter, BadgeAlert, ListPlus, X, Search as SearchIcon } from 'lucide-react';
+import { Heart, Plus, MapPin, Filter, BadgeAlert, ListPlus, X, Search as SearchIcon, Loader2 } from 'lucide-react'; // Added Loader2
 import { Skeleton } from '@/components/ui/skeleton';
 import { getFirebase } from '@/firebase';
 import { collection, query, where, getDocs, limit, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -50,6 +50,8 @@ export default function DiscoverPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [submittedSearchTerm, setSubmittedSearchTerm] = useState<string | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+  const [nextPageToken, setNextPageToken] = useState<string | null | undefined>(undefined); // Store next page token
+  const [loadingMore, setLoadingMore] = useState(false); // State for loading more indicator
   const { firestore } = getFirebase();
 
   const allTags = useMemo(() => {
@@ -124,11 +126,26 @@ export default function DiscoverPage() {
 
 
   // Fetch recommendations based on vacation details or submitted search term
-  const fetchRecommendations = useCallback(async (searchQuery?: string) => {
-    if (selectedVacation && user) {
-      setLoadingRecommendations(true);
+  const fetchRecommendations = useCallback(async (searchQuery?: string, pageToken?: string) => {
+    if (!selectedVacation || !user) {
+         setRecommendations([]);
+         setLoadingRecommendations(false);
+         setNextPageToken(undefined);
+         return;
+    }
+
+      if (!pageToken) { // Only set loading state for the initial fetch
+          setLoadingRecommendations(true);
+      } else {
+          setLoadingMore(true); // Set loading more state for subsequent fetches
+      }
+
       setError(null);
-      setRecommendations([]);
+      // If not paginating, clear existing recommendations
+      if (!pageToken) {
+          setRecommendations([]);
+      }
+
 
       // Use search term if provided, otherwise use interests from selected vacation
       const interestsToUse = searchQuery ? [searchQuery] : selectedVacation.interests;
@@ -136,37 +153,50 @@ export default function DiscoverPage() {
       const input = {
         destination: selectedVacation.destination,
         interests: interestsToUse, // Pass the array of interests or the search query as an array
+        pageToken: pageToken, // Pass the page token if available
       };
 
       try {
         const result = await getPlacesRecommendations(input);
-        setRecommendations(result.recommendations);
+         // Append results if paginating, otherwise replace
+         setRecommendations(prev => {
+             const existingIds = new Set(prev.map(r => r.id));
+             const newRecs = result.recommendations.filter(r => !existingIds.has(r.id));
+             return pageToken ? [...prev, ...newRecs] : newRecs;
+         });
+        setNextPageToken(result.nextPageToken); // Update the next page token
       } catch (err) {
         console.error("Error fetching recommendations:", err);
         setError(err instanceof Error ? err.message : "Could not fetch recommendations. Please try again later.");
       } finally {
-        setLoadingRecommendations(false);
+         setLoadingRecommendations(false);
+         setLoadingMore(false); // Reset loading more state
       }
-    } else {
-      setRecommendations([]);
-      setLoadingRecommendations(false);
-    }
   }, [selectedVacation, user]);
 
   // Initial fetch when vacation changes or search term is cleared
   useEffect(() => {
-    if (selectedVacation && submittedSearchTerm === null) {
-        fetchRecommendations(); // Fetch based on vacation details
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedVacation, submittedSearchTerm]); // Re-run when selected vacation changes or search term is cleared
+      if (selectedVacation) {
+          // Reset recommendations and token when vacation changes or search is cleared
+          setRecommendations([]);
+          setNextPageToken(undefined);
+          if (submittedSearchTerm === null) {
+              fetchRecommendations(); // Fetch based on vacation details
+          } else {
+              fetchRecommendations(submittedSearchTerm); // Fetch based on current search term
+          }
+      }
+  }, [selectedVacation, submittedSearchTerm, fetchRecommendations]); // Added fetchRecommendations to dependencies
+
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const termToSearch = searchTerm.trim();
+     setRecommendations([]); // Clear existing recommendations on new search
+     setNextPageToken(undefined); // Reset pagination token
     if (termToSearch) {
        setSubmittedSearchTerm(termToSearch);
-       fetchRecommendations(termToSearch); // Fetch based on search term
+       fetchRecommendations(termToSearch); // Fetch based on new search term
     } else {
         setSubmittedSearchTerm(null);
         fetchRecommendations(); // Revert to fetching based on vacation details
@@ -270,6 +300,12 @@ export default function DiscoverPage() {
       }
   };
 
+  const handleLoadMore = () => {
+      if (nextPageToken && !loadingMore) {
+          fetchRecommendations(submittedSearchTerm ?? undefined, nextPageToken);
+      }
+  };
+
 
   const renderLoadingSkeletons = (count: number) => (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -369,7 +405,7 @@ export default function DiscoverPage() {
       <form onSubmit={handleSearchSubmit} className="flex gap-2 sticky top-0 bg-background py-2 z-10">
         <Input
           type="search"
-          placeholder="Search for places..."
+          placeholder="Search within interests..." // Changed placeholder
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="flex-grow"
@@ -447,6 +483,7 @@ export default function DiscoverPage() {
            </CardContent>
          </Card>
        ) : filteredRecommendations.length > 0 ? (
+        <>
          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
            {filteredRecommendations.map((rec) => (
              <Card key={rec.id} className="overflow-hidden shadow-md flex flex-col group">
@@ -503,6 +540,26 @@ export default function DiscoverPage() {
             </Card>
            ))}
          </div>
+          {/* Load More Button */}
+           {nextPageToken && (
+               <div className="flex justify-center mt-6">
+                 <Button
+                   onClick={handleLoadMore}
+                   disabled={loadingMore}
+                   variant="outline"
+                 >
+                   {loadingMore ? (
+                     <>
+                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                       Loading...
+                     </>
+                   ) : (
+                     'Load More Results'
+                   )}
+                 </Button>
+               </div>
+             )}
+         </>
        ) : (
         <Card className="col-span-full">
             <CardContent className="p-6 text-center text-muted-foreground">

@@ -8,6 +8,7 @@ const GetPlacesRecommendationsInputSchema = z.object({
   destination: z.string().describe('The desired vacation destination.'),
   // dates: z.string().describe('The vacation dates.'), // Currently unused by Places API query
   interests: z.array(z.string()).min(1).describe('The user interests (array of strings), used for the search query.'), // Updated to array
+  pageToken: z.string().optional().describe('Token for fetching the next page of results.'),
 });
 
 export type GetPlacesRecommendationsInput = z.infer<typeof GetPlacesRecommendationsInputSchema>;
@@ -37,6 +38,7 @@ const RecommendationSchema = z.object({
 
 const GetPlacesRecommendationsOutputSchema = z.object({
   recommendations: z.array(RecommendationSchema).describe('A list of recommended locations from Google Places API.'),
+  nextPageToken: z.string().optional().describe('Token for fetching the next page of results, if available.'),
 });
 
 export type GetPlacesRecommendationsOutput = z.infer<typeof GetPlacesRecommendationsOutputSchema>;
@@ -108,16 +110,24 @@ export async function getPlacesRecommendations(
   if (!validation.success) {
       throw new Error(`Invalid input: ${validation.error.errors.map(e => e.message).join(', ')}`);
   }
-  const { destination, interests } = validation.data;
+  const { destination, interests, pageToken } = validation.data;
 
   // Construct the Places API Text Search query using interests array
   const interestsQuery = interests.join(' OR '); // Combine interests for the query
   const query = encodeURIComponent(`(${interestsQuery}) in ${destination}`);
   const fields = 'place_id,name,formatted_address,types,photos,editorial_summary,business_status,rating,user_ratings_total';
-  const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${apiKey}&fields=${fields}`;
+  let url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${apiKey}&fields=${fields}`;
+
+  if (pageToken) {
+      // Important: Google Places API requires a short delay before using a page token
+      // https://developers.google.com/maps/documentation/places/web-service/search-text#pagetoken
+      await new Promise(resolve => setTimeout(resolve, 2000)); // 2-second delay
+      url += `&pagetoken=${pageToken}`;
+  }
 
 
   try {
+    console.log(`Fetching Places API: ${url}`); // Log the URL being fetched
     const response = await fetch(url);
     if (!response.ok) {
       const errorData = await response.json();
@@ -126,6 +136,8 @@ export async function getPlacesRecommendations(
     }
 
     const data = await response.json();
+    console.log("Google Places API response status:", data.status);
+    // console.log("Google Places API response data:", JSON.stringify(data, null, 2)); // Log full response if needed
 
     if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
         console.error("Google Places API non-OK status:", data);
@@ -148,7 +160,13 @@ export async function getPlacesRecommendations(
       };
     }).filter((rec: Recommendation | null): rec is Recommendation => rec !== null);
 
-    return { recommendations };
+    console.log(`Found ${recommendations.length} recommendations.`);
+    console.log("Next page token:", data.next_page_token);
+
+    return {
+        recommendations,
+        nextPageToken: data.next_page_token // Return the next page token
+     };
 
   } catch (error) {
     console.error("Error fetching from Google Places API:", error);
