@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+// Ensure onSnapshot is imported
 import { onSnapshot, Query, DocumentData, QuerySnapshot } from 'firebase/firestore';
 
 interface FirestoreQueryState<T> {
@@ -9,50 +10,68 @@ interface FirestoreQueryState<T> {
   error: Error | null;
 }
 
-export function useFirestoreQuery<T>(query: Query<DocumentData>): FirestoreQueryState<T> {
+export function useFirestoreQuery<T>(query: Query<DocumentData> | null): FirestoreQueryState<T> { // Allow null query
   const [state, setState] = useState<FirestoreQueryState<T>>({
     data: null,
-    loading: true,
+    loading: true, // Start loading initially
     error: null,
   });
 
-  // Use useRef to store the query. This prevents unnecessary re-subscriptions
-  // if the query object reference changes but the query itself is logically the same.
+  // Use useRef to store the query. Initialize with the initial query prop.
   const queryRef = useRef(query);
 
   useEffect(() => {
     // Check if the query has actually changed.
-    // This requires a proper way to compare queries, which Firestore SDK doesn't provide directly.
-    // For simplicity, we'll compare the string representation, but be aware this might not be foolproof.
-    // A more robust solution might involve comparing query parameters individually.
-    if (queryRef.current.toString() !== query.toString()) {
+    // Compare string representations as a simple check.
+    const currentQueryString = query ? query.toString() : 'null';
+    const prevQueryString = queryRef.current ? queryRef.current.toString() : 'null';
+
+    if (prevQueryString !== currentQueryString) {
        queryRef.current = query;
+        // Reset state only when the query *actually* changes or becomes null/valid
+        setState({ data: null, loading: !!query, error: null });
+    } else if (!query && !state.loading) {
+        // If query becomes null and we weren't already loading, clear data
+        setState({ data: null, loading: false, error: null });
     }
 
-  }, [query]);
-
+  }, [query, state.loading]); // Add state.loading to dependencies
 
   useEffect(() => {
-    setState({ data: null, loading: true, error: null }); // Reset state on query change
+     if (!queryRef.current) {
+        // If the query is null, ensure loading is false and data is null
+        if (state.loading || state.data !== null || state.error !== null) {
+             setState({ data: null, loading: false, error: null });
+        }
+        return; // No query to subscribe to
+     }
+
+      // Set loading to true when a valid query is present and we are starting the effect
+      if (!state.loading) {
+         setState(prevState => ({ ...prevState, loading: true, error: null }));
+      }
+
 
     const unsubscribe = onSnapshot(
-      queryRef.current,
+      queryRef.current, // Use the stored ref
       (snapshot: QuerySnapshot<DocumentData>) => {
         const data = snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         })) as T[];
+         // Check if component is still mounted (optional, for strict mode safety)
         setState({ data, loading: false, error: null });
       },
       (error) => {
         console.error("Error fetching Firestore data:", error);
+         // Check if component is still mounted
         setState({ data: null, loading: false, error });
       }
     );
 
-    // Cleanup function to unsubscribe from the listener when the component unmounts or the query changes
+    // Cleanup function to unsubscribe from the listener
     return () => unsubscribe();
-  }, [queryRef.current]); // Re-run effect only when the stored query reference changes
+  }, [queryRef.current]); // Re-run effect only when the stored query ref changes
 
   return state;
 }

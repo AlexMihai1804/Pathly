@@ -32,16 +32,19 @@ export type LocationRecommendation = z.infer<typeof LocationRecommendationSchema
 
 
 // Represents a location that a user has saved as a favorite.
+// Note: We might just store the locationId reference under the user doc.
+// This schema is here for completeness based on backend.json
 export const FavoriteLocationSchema = z.object({
-  id: z.string().describe('Unique identifier for the FavoriteLocation entity.'),
+  // id: z.string().describe('Unique identifier for the FavoriteLocation entity.'), // Often the locationId itself can be the ID
   userId: z.string().describe('Reference to the unique identifier of the related User entity.'),
   locationId: z.string().describe('Reference to the unique identifier of the related LocationRecommendation entity.'),
+  name: z.string().optional().describe('Denormalized name for easy display.'), // Denormalized
 });
 export type FavoriteLocation = z.infer<typeof FavoriteLocationSchema>;
 
 // Represents an item selected by the user to potentially visit during a vacation.
 export const PlannedVisitSchema = z.object({
-    id: z.string().describe('Unique identifier for the planned visit entry.'),
+    // Use a composite ID or auto-ID for the document itself if needed, e.g., `${vacationId}_${locationId}`
     userId: z.string().describe('Reference to the user planning the visit.'),
     vacationId: z.string().describe('Reference to the specific vacation this visit belongs to.'),
     locationId: z.string().describe('Reference to the LocationRecommendation being planned.'),

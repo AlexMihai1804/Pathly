@@ -92,26 +92,60 @@
     "FavoriteLocation": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "FavoriteLocation",
-      "description": "Represents a location that a user has saved as a favorite.",
+      "description": "Represents a location that a user has saved as a favorite. Stored as a subcollection under the user.",
       "type": "object",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the FavoriteLocation entity. The specific format and generation strategy depend on the target database implementation."
-        },
         "userId": {
           "type": "string",
-          "description": "Reference to the unique identifier of the related User entity. (Relationship: User 1:N FavoriteLocations)"
+          "description": "Reference to the unique identifier of the related User entity. (Implicit relationship via subcollection path)"
         },
         "locationId": {
           "type": "string",
-          "description": "Reference to the unique identifier of the related LocationRecommendation entity. (Relationship: LocationRecommendation 1:N FavoriteLocations)"
-        }
+          "description": "Reference to the unique identifier of the related LocationRecommendation entity. Also used as the document ID for this favorite entry."
+        },
+         "name": {
+            "type": "string",
+             "description": "Denormalized name of the location for easier display in lists."
+          }
       },
       "required": [
-        "id",
         "userId",
         "locationId"
+      ]
+    },
+     "PlannedVisit": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "PlannedVisit",
+      "description": "Represents a location/activity selected by the user to include in their vacation plan. Stored as a subcollection under the user.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Reference to the unique identifier of the related User entity. (Implicit relationship via subcollection path)"
+        },
+        "vacationId": {
+          "type": "string",
+          "description": "Reference to the specific VacationDetails entity this visit belongs to."
+        },
+        "locationId": {
+          "type": "string",
+          "description": "Reference to the unique identifier of the related LocationRecommendation entity."
+        },
+        "locationName": {
+            "type": "string",
+             "description": "Denormalized name of the location for easier display."
+        },
+         "locationImageUrl": {
+            "type": "string",
+             "format": "uri",
+             "description": "Denormalized primary image URL for the location."
+          }
+      },
+      "required": [
+        "userId",
+        "vacationId",
+        "locationId",
+        "locationName"
       ]
     }
   },
@@ -122,80 +156,37 @@
       "anonymous"
     ],
     "rationales": {
-      "providers": "The user explicitly requested email authentication. Password authentication covers this.  Google authentication is added as a common convenient option. Anonymous Auth covers users who may want to explore the app without full registration. "
+      "providers": "The user explicitly requested email authentication. Password authentication covers this. Google authentication is added as a common convenient option. Anonymous Auth covers users who may want to explore the app without full registration."
     }
   },
   "firestore": {
-    "structure": [
-      {
-        "definition": {
-          "description": "Collection containing user profile documents.",
-          "entityName": "User",
-          "schema": {
-            "$ref": "#/backend/entities/User"
-          },
-          "params": [
-            {
-              "description": "The unique ID of the user.",
-              "name": "userId"
-            }
-          ]
-        },
-        "path": "/users/{userId}"
-      },
-      {
-        "definition": {
-          "description": "Collection containing vacation details documents.",
-          "entityName": "VacationDetails",
-          "schema": {
-            "$ref": "#/backend/entities/VacationDetails"
-          },
-          "params": [
-            {
-              "description": "The unique ID of the vacation details.",
-              "name": "vacationDetailsId"
-            }
-          ]
-        },
-        "path": "/vacationDetails/{vacationDetailsId}"
-      },
-      {
-        "definition": {
-          "description": "Collection containing location recommendation documents.",
-          "entityName": "LocationRecommendation",
-          "schema": {
-            "$ref": "#/backend/entities/LocationRecommendation"
-          },
-          "params": [
-            {
-              "description": "The unique ID of the location recommendation.",
-              "name": "locationRecommendationId"
-            }
-          ]
-        },
-        "path": "/locationRecommendations/{locationRecommendationId}"
-      },
-      {
-        "definition": {
-          "description": "Subcollection containing favorite locations for a specific user.",
-          "entityName": "FavoriteLocation",
-          "schema": {
-            "$ref": "#/backend/entities/FavoriteLocation"
-          },
-          "params": [
-            {
-              "description": "The unique ID of the user.",
-              "name": "userId"
-            },
-            {
-              "description": "The unique ID of the location.",
-              "name": "locationId"
-            }
-          ]
-        },
-        "path": "/users/{userId}/favoriteLocations/{locationId}"
-      }
-    ],
-    "reasoning": "Based on the entities and application proposal, the following Firestore collections are recommended:\n\n*   **/users/{userId}**: This collection stores user profile information, including email. The `userId` will be used as the document ID.  Email authentication is a core feature.\n*   **/vacationDetails/{vacationDetailsId}**: This collection stores vacation details provided by users.  Each document will contain information like destination, dates, and interests. The `vacationDetailsId` will be used as the document ID.  A `userId` field will link each vacation detail document to the user who created it.\n*   **/locationRecommendations/{locationRecommendationId}**: This collection stores location recommendations.  Each document will contain information like the name, short description, and pictures of a location. The `locationRecommendationId` will be used as the document ID.\n*   **/users/{userId}/favoriteLocations/{locationId}**: This subcollection stores the user's favorite locations, linked to both the user and the recommended location. This creates a 1:N relationship between users and their favorite locations.  Using the `locationId` as the document ID makes querying favorites for a user easier."
+     "collections": [
+       {
+         "path": "/users/{userId}",
+         "schema": { "$ref": "#/entities/User" },
+         "description": "Stores user profile information."
+       },
+       {
+         "path": "/vacationDetails/{vacationDetailsId}",
+         "schema": { "$ref": "#/entities/VacationDetails" },
+         "description": "Stores the core details for each planned vacation."
+       },
+       {
+         "path": "/locationRecommendations/{locationRecommendationId}",
+         "schema": { "$ref": "#/entities/LocationRecommendation" },
+         "description": "Potentially stores general location data if not fetching externally."
+       },
+       {
+         "path": "/users/{userId}/favoriteLocations/{locationId}",
+         "schema": { "$ref": "#/entities/FavoriteLocation" },
+         "description": "Subcollection storing a user's favorited locations. Uses locationId as document ID."
+       },
+        {
+         "path": "/users/{userId}/plannedVisits/{planItemId}",
+         "schema": { "$ref": "#/entities/PlannedVisit" },
+         "description": "Subcollection storing locations/activities a user has added to a specific vacation plan. planItemId could be a composite ID like {vacationId}_{locationId} or an auto-ID."
+       }
+     ],
+    "reasoning": "Updated structure:\n*   **/users/{userId}**: Stores user profiles.\n*   **/vacationDetails/{vacationDetailsId}**: Stores details for each vacation plan (destination, dates, interests).\n*   **/locationRecommendations/{locationRecommendationId}**: Optional collection if we need to store general location data fetched from external APIs or generated by AI.\n*   **/users/{userId}/favoriteLocations/{locationId}**: Subcollection for user favorites. Using locationId as the document ID allows easy checking if a location is favorited.\n*   **/users/{userId}/plannedVisits/{planItemId}**: Subcollection for items added to a specific plan. The `planItemId` could be an auto-generated ID or a composite ID (e.g., `vacationId_locationId`) for easier querying per vacation plan. Includes denormalized `locationName` and `locationImageUrl` for display."
   }
 }
