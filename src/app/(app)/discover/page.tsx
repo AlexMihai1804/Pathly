@@ -181,7 +181,7 @@ export default function DiscoverPage() {
       let newDisplayableItemsCount = 0;
 
       try {
-        console.log(`Fetching Places API: ${url}`, input); // Log input
+        console.log(`Fetching Places API with input:`, input); // Log input
         const result = await getPlacesRecommendations(input);
         const newRecs = result.recommendations;
         const existingIds = new Set(recommendations.map(r => r.id));
@@ -290,6 +290,8 @@ export default function DiscoverPage() {
 
        return () => {
            if (loadMoreRef.current) {
+               // Ensure loadMoreRef.current is not null before unsubscribing
+               // eslint-disable-next-line react-hooks/exhaustive-deps
                observer.unobserve(loadMoreRef.current);
            }
        };
