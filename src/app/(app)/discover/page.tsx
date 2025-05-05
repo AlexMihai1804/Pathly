@@ -54,6 +54,7 @@ export default function DiscoverPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const { firestore } = getFirebase();
   const isFetchingRef = useRef(false); // Ref to prevent concurrent fetches
+  const loadMoreRef = useRef<HTMLDivElement>(null); // Ref for the intersection observer sentinel
 
   const allTags = useMemo(() => {
       const tags = new Set<string>();
@@ -220,17 +221,36 @@ export default function DiscoverPage() {
 
   const handleLoadMore = useCallback(() => {
       if (nextPageToken && !loadingMore && !isFetchingRef.current) {
+          console.log("handleLoadMore triggered with token:", nextPageToken)
           fetchRecommendations(submittedSearchTerm ?? undefined, nextPageToken);
       }
   }, [nextPageToken, loadingMore, submittedSearchTerm, fetchRecommendations]); // isFetchingRef handled internally
 
-  // Effect to auto-load more if the view is empty and not currently loading
-  useEffect(() => {
-      if (!loadingRecommendations && !loadingMore && filteredRecommendations.length === 0 && nextPageToken) {
-          console.log("Auto-loading more recommendations because the filtered list is empty.");
-          handleLoadMore();
-      }
-  }, [filteredRecommendations, loadingRecommendations, loadingMore, nextPageToken, handleLoadMore]);
+
+   // Intersection Observer for infinite scroll
+   useEffect(() => {
+       if (!loadMoreRef.current || loadingRecommendations) {
+           return;
+       }
+
+       const observer = new IntersectionObserver(
+           (entries) => {
+               if (entries[0].isIntersecting && nextPageToken && !loadingMore && !isFetchingRef.current) {
+                   console.log("Intersection Observer triggered load more");
+                   handleLoadMore();
+               }
+           },
+           { threshold: 1.0 } // Trigger when fully visible
+       );
+
+       observer.observe(loadMoreRef.current);
+
+       return () => {
+           if (loadMoreRef.current) {
+               observer.unobserve(loadMoreRef.current);
+           }
+       };
+   }, [handleLoadMore, nextPageToken, loadingMore, loadingRecommendations]); // Rerun observer setup if dependencies change
 
 
   const handleFilterToggle = (tag: string) => {
@@ -556,25 +576,13 @@ export default function DiscoverPage() {
             </Card>
            ))}
          </div>
-          {/* Load More Button */}
-           {nextPageToken && (
-               <div className="flex justify-center mt-6">
-                 <Button
-                   onClick={handleLoadMore}
-                   disabled={loadingMore || isFetchingRef.current} // Disable while fetching
-                   variant="outline"
-                 >
-                   {loadingMore ? (
-                     <>
-                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                       Loading...
-                     </>
-                   ) : (
-                     'Load More Results'
-                   )}
-                 </Button>
-               </div>
-             )}
+           {/* Load More Sentinel and Loader */}
+            <div ref={loadMoreRef} className="h-10 flex justify-center items-center mt-6">
+                {loadingMore && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
+                {!nextPageToken && recommendations.length > 0 && (
+                    <p className="text-muted-foreground text-sm">No more recommendations.</p>
+                )}
+            </div>
          </>
        ) : (
         <Card className="col-span-full">
@@ -583,7 +591,7 @@ export default function DiscoverPage() {
                 ? "No recommendations found based on your vacation details."
                 : (recommendations.length > 0 && filteredRecommendations.length === 0)
                     ? "No recommendations match your current filters."
-                    : "No more recommendations found."
+                    : "No recommendations found." // Changed this message
               }
               {activeFilters.size > 0 && (
                  <Button variant="link" onClick={() => setActiveFilters(new Set())} className="p-1 text-sm">
@@ -601,4 +609,3 @@ export default function DiscoverPage() {
     </div>
   );
 }
-
