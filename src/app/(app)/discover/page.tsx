@@ -35,6 +35,8 @@ interface Recommendation {
     tags: string[];
 }
 
+const MAX_AUTO_FETCH_ATTEMPTS = 3; // Limit automatic retries if no new items are found
+
 export default function DiscoverPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -45,16 +47,18 @@ export default function DiscoverPage() {
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [plannedVisitIds, setPlannedVisitIds] = useState<Set<string>>(new Set());
   const [loadingVacations, setLoadingVacations] = useState(true);
-  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false); // For initial load/search
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [submittedSearchTerm, setSubmittedSearchTerm] = useState<string | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [nextPageToken, setNextPageToken] = useState<string | null | undefined>(undefined);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false); // Specifically for pagination/auto-load
   const { firestore } = getFirebase();
   const isFetchingRef = useRef(false); // Ref to prevent concurrent fetches
   const loadMoreRef = useRef<HTMLDivElement>(null); // Ref for the intersection observer sentinel
+  const autoFetchAttemptRef = useRef(0); // Counter for automatic fetches when view is empty
+  const contentRef = useRef<HTMLDivElement>(null); // Ref for the main content area to check visibility
 
   const allTags = useMemo(() => {
       const tags = new Set<string>();
@@ -69,6 +73,7 @@ export default function DiscoverPage() {
     }
   }, [user, authLoading, router]);
 
+  // Fetch Vacations
   useEffect(() => {
     if (user && firestore) {
       setLoadingVacations(true);
@@ -94,6 +99,7 @@ export default function DiscoverPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, firestore, authLoading]);
 
+  // Fetch Favorites
    useEffect(() => {
     if (user && firestore) {
       const favoritesQuery = query(collection(firestore, `users/${user.uid}/favoriteLocations`));
@@ -109,6 +115,7 @@ export default function DiscoverPage() {
     }
   }, [user, firestore]);
 
+  // Fetch Planned Visits
    useEffect(() => {
      if (user && firestore && selectedVacation) {
        const plannedVisitsQuery = query(
@@ -128,85 +135,6 @@ export default function DiscoverPage() {
    }, [user, firestore, selectedVacation]);
 
 
-  const fetchRecommendations = useCallback(async (searchQuery?: string, pageToken?: string, isRetry = false) => {
-    if (!selectedVacation || !user || isFetchingRef.current) {
-        if (!pageToken && !isRetry) { // Only clear recommendations if it's a new fetch/switch, not retry/load more
-             setRecommendations([]);
-             setNextPageToken(undefined);
-        }
-        setLoadingRecommendations(false); // Ensure loading stops if preconditions fail
-        setLoadingMore(false);
-         return;
-    }
-
-      isFetchingRef.current = true; // Set fetching flag
-
-      if (!pageToken) {
-          setLoadingRecommendations(true);
-      } else {
-          setLoadingMore(true);
-      }
-
-      // Reset error only for new fetches/searches, not for load more
-      if (!pageToken) {
-        setError(null);
-        setRecommendations([]); // Clear existing recommendations only on new search/fetch
-      }
-
-
-      const interestsToUse = searchQuery ? [searchQuery] : selectedVacation.interests;
-
-      const input = {
-        destination: selectedVacation.destination,
-        interests: interestsToUse,
-        pageToken: pageToken,
-      };
-
-      try {
-        const result = await getPlacesRecommendations(input);
-         setRecommendations(prev => {
-             const existingIds = new Set(prev.map(r => r.id));
-             const newRecs = result.recommendations.filter(r => !existingIds.has(r.id));
-             // Only append if loading more or retrying, otherwise replace
-             return (pageToken || isRetry) ? [...prev, ...newRecs] : newRecs;
-         });
-        setNextPageToken(result.nextPageToken);
-      } catch (err) {
-        console.error("Error fetching recommendations:", err);
-        // Set error only if it's not a pagination request that failed
-        if (!pageToken) {
-           setError(err instanceof Error ? err.message : "Could not fetch recommendations. Please try again later.");
-        } else {
-             toast({ title: "Failed to load more recommendations.", description: err instanceof Error ? err.message : undefined, variant: "destructive" });
-             // Reset token so the user might retry manually if needed
-             setNextPageToken(pageToken);
-        }
-      } finally {
-         if (!pageToken) setLoadingRecommendations(false);
-         setLoadingMore(false);
-         isFetchingRef.current = false; // Reset fetching flag
-      }
-  }, [selectedVacation, user, toast]); // Removed isFetchingRef.current from dependencies
-
-  useEffect(() => {
-      if (selectedVacation && !isFetchingRef.current) {
-          setRecommendations([]);
-          setNextPageToken(undefined);
-          fetchRecommendations(submittedSearchTerm ?? undefined);
-      }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedVacation, submittedSearchTerm]); // fetchRecommendations is memoized
-
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const termToSearch = searchTerm.trim();
-     setRecommendations([]);
-     setNextPageToken(undefined);
-     setSubmittedSearchTerm(termToSearch || null);
-    // Fetching is handled by the useEffect watching submittedSearchTerm
-  };
-
   const filteredRecommendations = useMemo(() => {
     let filtered = recommendations;
     if (activeFilters.size > 0) {
@@ -219,13 +147,128 @@ export default function DiscoverPage() {
     return filtered;
   }, [recommendations, activeFilters, plannedVisitIds]);
 
+
+  // Fetch Recommendations Function (Modified for auto-fetching)
+  const fetchRecommendations = useCallback(async (searchQuery?: string, pageToken?: string, isRetry = false, isAutoFetch = false) => {
+    if (!selectedVacation || !user || isFetchingRef.current) {
+        if (!pageToken && !isRetry) {
+             setRecommendations([]);
+             setNextPageToken(undefined);
+        }
+        if (!isAutoFetch) setLoadingRecommendations(false); // Only reset main loader if not auto-fetching more
+        setLoadingMore(false);
+        return 0; // Return 0 new items found
+    }
+
+      isFetchingRef.current = true;
+
+      if (!pageToken) { // Initial fetch or new search
+          setLoadingRecommendations(true);
+          setRecommendations([]); // Clear existing recommendations
+          setError(null);
+          autoFetchAttemptRef.current = 0; // Reset auto-fetch counter
+      } else { // Pagination or auto-fetch
+          setLoadingMore(true);
+      }
+
+      const interestsToUse = searchQuery ? [searchQuery] : selectedVacation.interests;
+      const input = {
+        destination: selectedVacation.destination,
+        interests: interestsToUse,
+        pageToken: pageToken,
+      };
+
+      let newDisplayableItemsCount = 0;
+
+      try {
+        console.log(`Fetching Places API: ${url}`, input); // Log input
+        const result = await getPlacesRecommendations(input);
+        const newRecs = result.recommendations;
+        const existingIds = new Set(recommendations.map(r => r.id));
+        const trulyNewRecs = newRecs.filter(r => !existingIds.has(r.id));
+
+        // Calculate how many of the truly new recs will be displayed
+        const displayableNewRecs = trulyNewRecs.filter(rec =>
+           !plannedVisitIds.has(rec.id) && // Not already planned
+           (activeFilters.size === 0 || rec.tags.some(tag => activeFilters.has(tag))) // Matches filters
+        );
+        newDisplayableItemsCount = displayableNewRecs.length;
+
+         setRecommendations(prev => [...prev, ...trulyNewRecs]);
+        setNextPageToken(result.nextPageToken);
+        if (result.nextPageToken) {
+           autoFetchAttemptRef.current = 0; // Reset counter if we get more results
+        }
+
+        console.log(`Fetched ${newRecs.length} items. ${trulyNewRecs.length} are new. ${displayableNewRecs.length} are displayable. Next token: ${result.nextPageToken}`);
+
+      } catch (err) {
+        console.error("Error fetching recommendations:", err);
+        const errorMessage = err instanceof Error ? err.message : "Could not fetch recommendations.";
+        if (!pageToken) {
+           setError(errorMessage);
+        } else {
+             toast({ title: "Failed to load more recommendations.", description: errorMessage, variant: "destructive" });
+             setNextPageToken(pageToken); // Keep token for manual retry? Or set to null? Keep for now.
+        }
+         newDisplayableItemsCount = -1; // Indicate error
+      } finally {
+         if (!pageToken) setLoadingRecommendations(false);
+         setLoadingMore(false);
+         isFetchingRef.current = false;
+      }
+
+       return newDisplayableItemsCount; // Return count of new *displayable* items
+  }, [selectedVacation, user, toast, recommendations, plannedVisitIds, activeFilters]); // Added dependencies
+
+
+  // Effect to trigger initial fetch or fetch on search term change
+  useEffect(() => {
+      if (selectedVacation && !isFetchingRef.current) {
+          fetchRecommendations(submittedSearchTerm ?? undefined);
+      }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVacation, submittedSearchTerm]); // fetchRecommendations is memoized
+
+    // Effect to trigger auto-fetching if the view becomes empty or nearly empty
+    useEffect(() => {
+        // Don't auto-fetch if currently loading, or if there's no next page, or if max attempts reached
+        if (loadingRecommendations || loadingMore || !nextPageToken || autoFetchAttemptRef.current >= MAX_AUTO_FETCH_ATTEMPTS) {
+            return;
+        }
+
+        // Check if filtered recommendations are empty or few
+        const shouldAutoFetch = filteredRecommendations.length < 3; // Adjust threshold as needed
+
+        if (shouldAutoFetch && nextPageToken && !isFetchingRef.current) {
+            console.log(`Auto-fetching more... Attempt: ${autoFetchAttemptRef.current + 1}`);
+            autoFetchAttemptRef.current += 1;
+            fetchRecommendations(submittedSearchTerm ?? undefined, nextPageToken, false, true); // isAutoFetch = true
+        } else if (filteredRecommendations.length > 0) {
+            // Reset counter if we have enough items again
+            autoFetchAttemptRef.current = 0;
+        }
+
+    }, [filteredRecommendations, nextPageToken, loadingRecommendations, loadingMore, fetchRecommendations, submittedSearchTerm]);
+
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const termToSearch = searchTerm.trim();
+     // Reset everything for a new search
+     setRecommendations([]);
+     setNextPageToken(undefined);
+     setActiveFilters(new Set()); // Clear filters on new search
+     setSubmittedSearchTerm(termToSearch || null);
+    // Fetching is handled by the useEffect watching submittedSearchTerm
+  };
+
   const handleLoadMore = useCallback(() => {
       if (nextPageToken && !loadingMore && !isFetchingRef.current) {
-          console.log("handleLoadMore triggered with token:", nextPageToken)
+          console.log("Manual handleLoadMore triggered with token:", nextPageToken);
           fetchRecommendations(submittedSearchTerm ?? undefined, nextPageToken);
       }
-  }, [nextPageToken, loadingMore, submittedSearchTerm, fetchRecommendations]); // isFetchingRef handled internally
-
+  }, [nextPageToken, loadingMore, submittedSearchTerm, fetchRecommendations]);
 
    // Intersection Observer for infinite scroll
    useEffect(() => {
@@ -240,7 +283,7 @@ export default function DiscoverPage() {
                    handleLoadMore();
                }
            },
-           { threshold: 1.0 } // Trigger when fully visible
+           { threshold: 0.1 } // Trigger when 10% visible
        );
 
        observer.observe(loadMoreRef.current);
@@ -261,6 +304,8 @@ export default function DiscoverPage() {
       } else {
         newFilters.add(tag);
       }
+       // Trigger a re-evaluation for auto-fetching if needed
+      setTimeout(() => { /* Allow state to update */ }, 0);
       return newFilters;
     });
   };
@@ -308,10 +353,10 @@ export default function DiscoverPage() {
       try {
           const snapshot = await getDocs(plannedVisitsQuery);
           if (isInPlan && !snapshot.empty) {
-               // This case should ideally not happen due to filtering, but handle defensively
                const docToDelete = snapshot.docs[0];
                await deleteDoc(doc(firestore, `users/${user.uid}/plannedVisits`, docToDelete.id));
                toast({ title: `${rec.name} removed from plan.` });
+                setRecommendations(prev => [...prev]); // Force re-render if needed to show item again
           } else if (!isInPlan && snapshot.empty) {
                const planDocRef = doc(collection(firestore, `users/${user.uid}/plannedVisits`));
                const planData: PlannedVisit = {
@@ -327,8 +372,6 @@ export default function DiscoverPage() {
                await setDoc(planDocRef, planData);
                 toast({ title: `${rec.name} added to plan!` });
           } else {
-               // This case handles potential state mismatch if filtering didn't catch an already planned item
-               // Or if an item was removed but still showing due to race condition
                console.warn("Inconsistent state between local plannedVisitIds and Firestore query result for:", locationId);
                toast({ title: `Action for ${rec.name} could not be completed due to inconsistent state.`, variant: "destructive" });
           }
@@ -395,7 +438,7 @@ export default function DiscoverPage() {
 
 
   return (
-    <div className="p-4 space-y-4 pb-20 md:pb-4">
+    <div ref={contentRef} className="p-4 space-y-4 pb-20 md:pb-4">
       {/* Vacation Selector Dropdown */}
       <div className="flex justify-center mb-4">
          {vacations.length > 0 && selectedVacation && (
@@ -415,11 +458,11 @@ export default function DiscoverPage() {
                    checked={selectedVacation?.id === vacation.id}
                    onCheckedChange={() => {
                        setSelectedVacation(vacation);
-                       setSubmittedSearchTerm(null);
+                       setSubmittedSearchTerm(null); // Reset search on vacation change
                        setSearchTerm('');
-                       setActiveFilters(new Set());
-                       setRecommendations([]); // Clear recommendations on vacation switch
-                       setNextPageToken(undefined); // Reset token on vacation switch
+                       setActiveFilters(new Set()); // Reset filters
+                       setRecommendations([]); // Clear recommendations
+                       setNextPageToken(undefined); // Reset token
                    }}
                    className="truncate"
                  >
@@ -516,7 +559,17 @@ export default function DiscoverPage() {
              </Button>
            </CardContent>
          </Card>
-       ) : filteredRecommendations.length > 0 ? (
+       ) : (recommendations.length > 0 && filteredRecommendations.length === 0) ? (
+          // Case: Recommendations exist, but none match the filters
+          <Card className="col-span-full">
+              <CardContent className="p-6 text-center text-muted-foreground">
+                  No recommendations match your current filters.
+                  <Button variant="link" onClick={() => setActiveFilters(new Set())} className="p-1 text-sm">
+                      Clear Filters?
+                  </Button>
+              </CardContent>
+          </Card>
+       ) : (filteredRecommendations.length > 0 || loadingMore) ? ( // Show grid if items exist OR if loading more
         <>
          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
            {filteredRecommendations.map((rec) => (
@@ -566,11 +619,10 @@ export default function DiscoverPage() {
                       favorites.has(rec.id) ? "text-destructive fill-destructive" : "hover:text-destructive hover:fill-destructive/50"
                    )} />
                 </Button>
-                 {/* Show Add to Plan button only if not already planned */}
-                 {!plannedVisitIds.has(rec.id) && (
-                    <Button variant="ghost" size="icon" onClick={() => handlePlanToggle(rec)} aria-label={`Add ${rec.name} to plan`}>
+                 {!plannedVisitIds.has(rec.id) && ( // Only show add button if not in plan
+                     <Button variant="ghost" size="icon" onClick={() => handlePlanToggle(rec)} aria-label={`Add ${rec.name} to plan`}>
                        <ListPlus className="h-5 w-5 text-muted-foreground transition-colors hover:text-primary" />
-                    </Button>
+                     </Button>
                  )}
               </CardFooter>
             </Card>
@@ -579,26 +631,17 @@ export default function DiscoverPage() {
            {/* Load More Sentinel and Loader */}
             <div ref={loadMoreRef} className="h-10 flex justify-center items-center mt-6">
                 {loadingMore && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
-                {!nextPageToken && recommendations.length > 0 && (
+                {!nextPageToken && recommendations.length > 0 && !loadingMore && (
                     <p className="text-muted-foreground text-sm">No more recommendations.</p>
                 )}
             </div>
          </>
        ) : (
+        // Case: No recommendations found (and not loading)
         <Card className="col-span-full">
             <CardContent className="p-6 text-center text-muted-foreground">
-              {(recommendations.length === 0 && !submittedSearchTerm && activeFilters.size === 0 && !error)
-                ? "No recommendations found based on your vacation details."
-                : (recommendations.length > 0 && filteredRecommendations.length === 0)
-                    ? "No recommendations match your current filters."
-                    : "No recommendations found." // Changed this message
-              }
-              {activeFilters.size > 0 && (
-                 <Button variant="link" onClick={() => setActiveFilters(new Set())} className="p-1 text-sm">
-                    Clear Filters?
-                 </Button>
-              )}
-               {submittedSearchTerm && (
+              No recommendations found. Try broadening your search or interests.
+              {submittedSearchTerm && (
                  <Button variant="link" onClick={() => { setSubmittedSearchTerm(null); setSearchTerm(''); }} className="p-1 text-sm">
                     Clear Search?
                  </Button>
