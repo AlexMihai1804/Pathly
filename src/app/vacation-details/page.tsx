@@ -11,87 +11,123 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Label } from '@/components/ui/label';
 import { useRouter } from 'next/navigation';
 import { VacationDetailsSchema, VacationDetails } from '@/firebase/types'; // Assuming types are defined
-import { AuthProvider } from '@/hooks/use-auth'; // Import AuthProvider
+// Removed AuthProvider import as it's now global
 import { z } from 'zod'; // Import Zod for error handling
 import { Skeleton } from '@/components/ui/skeleton'; // Import Skeleton
 
-function VacationDetailsContent() {
+// Renamed component to avoid conflict with file name convention
+function VacationDetailsForm() {
   const { user, loading: authLoading } = useAuth();
   const [destination, setDestination] = useState('');
   const [dates, setDates] = useState('');
   const [interests, setInterests] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [hasDetails, setHasDetails] = useState<boolean | null>(null); // null means loading/unknown
+  const [isSubmitting, setIsSubmitting] = useState(false); // Renamed loading to isSubmitting for clarity
+  const [checkingDetails, setCheckingDetails] = useState(true); // State to track initial check
   const router = useRouter();
   const { firestore } = getFirebase();
 
-  // Check if user already has vacation details
+  // Redirect if not logged in (handled by root layout/page.tsx now usually)
+   useEffect(() => {
+     if (!authLoading && !user) {
+       router.replace('/login');
+     }
+   }, [user, authLoading, router]);
+
+
+  // Check if user already has vacation details only once on mount
   useEffect(() => {
-    if (user && hasDetails === null && firestore) { // Ensure firestore is initialized
-      setLoading(true);
-      const detailsQuery = query(collection(firestore, 'vacationDetails'), where('userId', '==', user.uid));
+    let isMounted = true; // Flag to prevent state updates after unmount
+    if (user && firestore) {
+      setCheckingDetails(true);
+      const detailsQuery = query(
+        collection(firestore, 'vacationDetails'),
+        where('userId', '==', user.uid),
+        limit(1) // Only need one document to confirm existence
+      );
+
       getDocs(detailsQuery)
         .then((querySnapshot) => {
-          if (!querySnapshot.empty) {
-            setHasDetails(true);
-            router.push('/recommendations'); // Redirect if details exist
-          } else {
-            setHasDetails(false);
+          if (isMounted && !querySnapshot.empty) {
+            // Details exist, redirect to discover (or recommendations)
+            router.replace('/discover');
+          } else if (isMounted) {
+             // No details found, allow rendering the form
+             setCheckingDetails(false);
           }
         })
         .catch((err) => {
-          console.error("Error checking vacation details:", err);
-          setError("Failed to check existing vacation details.");
-          setHasDetails(false); // Assume no details on error to allow input
-        })
-        .finally(() => setLoading(false));
+          if (isMounted) {
+             console.error("Error checking vacation details:", err);
+             setError("Failed to check existing vacation details.");
+             setCheckingDetails(false); // Allow rendering form even on error
+           }
+        });
+    } else if (!authLoading && !user) {
+        // If not logged in after auth check, no need to check details
+        if(isMounted) setCheckingDetails(false);
     }
+
+     return () => { isMounted = false }; // Cleanup function
      // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, firestore, hasDetails]); // Removed router from deps
+  }, [user, firestore, authLoading]); // Depend on user and firestore
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !firestore) { // Ensure firestore is initialized
-      setError('You must be logged in to save vacation details.');
+    if (!user || !firestore) {
+      setError('Authentication or Database service is not ready.');
       return;
     }
     setError(null);
-    setLoading(true);
+    setIsSubmitting(true); // Use isSubmitting state
 
     try {
-      const vacationData: Omit<VacationDetails, 'id'> = { // Omit id for creation
+      const vacationData = { // No need for Omit<...> if id is handled below
         userId: user.uid,
         destination,
         dates,
         interests,
       };
 
-      // Validate with Zod (optional but recommended)
-      VacationDetailsSchema.omit({ id: true }).parse(vacationData); // Validate before saving
+      // Validate with Zod
+      // Use safeParse for better error handling potential
+       const validationResult = VacationDetailsSchema.omit({ id: true }).safeParse(vacationData);
+
+       if (!validationResult.success) {
+          // Map Zod errors to a user-friendly string
+          const errorMessages = validationResult.error.errors.map(err => `${err.path.join('.')} (${err.message})`).join(', ');
+          throw new Error(`Invalid input: ${errorMessages}`);
+       }
+
+      // Use the validated data
+      const validatedData = validationResult.data;
 
       // Add a new document with an auto-generated ID
       const docRef = doc(collection(firestore, "vacationDetails")); // Create a ref with auto ID
-      await setDoc(docRef, { ...vacationData, id: docRef.id }); // Set the data including the ID
+      await setDoc(docRef, { ...validatedData, id: docRef.id }); // Set the data including the ID
 
 
       console.log('Vacation details saved successfully!');
-      router.push('/recommendations'); // Redirect to recommendations page
+      router.push('/discover'); // Redirect after successful save
     } catch (err: any) {
       console.error("Error saving vacation details:", err);
-       if (err instanceof z.ZodError) {
-         setError(`Invalid input: ${err.errors.map(e => `${e.path.join('.')} - ${e.message}`).join(', ')}`);
+       if (err instanceof z.ZodError) { // Check specific error type
+         // Already handled by safeParse logic above, but keep for robustness
+          const errorMessages = err.errors.map(e => `${e.path.join('.')} (${e.message})`).join(', ');
+         setError(`Validation failed: ${errorMessages}`);
        } else {
         setError(err.message || 'Failed to save vacation details.');
        }
     } finally {
-      setLoading(false);
+      setIsSubmitting(false); // Reset submitting state
     }
   };
 
-  // Render loading state or null if auth is loading or user has details and is redirecting
-   if (authLoading || hasDetails === null || hasDetails === true) {
-    return (
+   // Show loading skeleton while checking auth or initial details
+   if (authLoading || checkingDetails) {
+     return (
        <div className="flex items-center justify-center min-h-screen bg-secondary p-4">
          {/* Loading Skeleton */}
          <Card className="w-full max-w-lg shadow-xl">
@@ -125,7 +161,13 @@ function VacationDetailsContent() {
      );
    }
 
+    // If not loading and no user, LoginPage should be displayed (handled by page.tsx)
+    if (!user) {
+        return null; // Or redirect explicitly if needed, though page.tsx handles this
+    }
 
+
+  // Render the form if checks are complete and no details were found
   return (
     <div className="flex items-center justify-center min-h-screen bg-secondary p-4">
       <Card className="w-full max-w-lg shadow-xl">
@@ -148,6 +190,7 @@ function VacationDetailsContent() {
                 required
                 className="focus:ring-primary"
                 aria-describedby="destination-help"
+                 aria-invalid={error?.includes('destination') ? "true" : "false"}
               />
                <p id="destination-help" className="text-xs text-muted-foreground">Where do you want to go?</p>
             </div>
@@ -162,6 +205,7 @@ function VacationDetailsContent() {
                 required
                  className="focus:ring-primary"
                  aria-describedby="dates-help"
+                 aria-invalid={error?.includes('dates') ? "true" : "false"}
               />
               <p id="dates-help" className="text-xs text-muted-foreground">When are you planning to travel?</p>
             </div>
@@ -175,12 +219,13 @@ function VacationDetailsContent() {
                 required
                  className="focus:ring-primary min-h-[100px]"
                  aria-describedby="interests-help"
+                 aria-invalid={error?.includes('interests') ? "true" : "false"}
               />
                <p id="interests-help" className="text-xs text-muted-foreground">What kind of activities do you enjoy?</p>
             </div>
             {error && <p className="text-destructive text-sm font-medium">{error}</p>}
-            <Button type="submit" disabled={loading || !user} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground">
-              {loading ? 'Finding Places...' : 'Get Recommendations'}
+            <Button type="submit" disabled={isSubmitting || !user} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground">
+              {isSubmitting ? 'Saving...' : 'Get Recommendations'}
             </Button>
           </form>
         </CardContent>
@@ -192,12 +237,5 @@ function VacationDetailsContent() {
   );
 }
 
-
-// Wrap the content with AuthProvider
-export default function VacationDetailsPage() {
-  return (
-    <AuthProvider>
-      <VacationDetailsContent />
-    </AuthProvider>
-  );
-}
+// Export the page component directly
+export default VacationDetailsForm;
