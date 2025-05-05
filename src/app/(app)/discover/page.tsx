@@ -1,12 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Heart, Plus, MapPin, Filter, BadgeAlert, ListPlus, X, Search as SearchIcon, Loader2 } from 'lucide-react'; // Added Loader2
+import { Heart, Plus, MapPin, Filter, BadgeAlert, ListPlus, X, Search as SearchIcon, Loader2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getFirebase } from '@/firebase';
 import { collection, query, where, getDocs, limit, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -43,20 +43,20 @@ export default function DiscoverPage() {
   const [selectedVacation, setSelectedVacation] = useState<VacationDetails | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
-  const [plannedVisitIds, setPlannedVisitIds] = useState<Set<string>>(new Set()); // Stores locationIds in the current plan
+  const [plannedVisitIds, setPlannedVisitIds] = useState<Set<string>>(new Set());
   const [loadingVacations, setLoadingVacations] = useState(true);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [submittedSearchTerm, setSubmittedSearchTerm] = useState<string | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
-  const [nextPageToken, setNextPageToken] = useState<string | null | undefined>(undefined); // Store next page token
-  const [loadingMore, setLoadingMore] = useState(false); // State for loading more indicator
+  const [nextPageToken, setNextPageToken] = useState<string | null | undefined>(undefined);
+  const [loadingMore, setLoadingMore] = useState(false);
   const { firestore } = getFirebase();
+  const isFetchingRef = useRef(false); // Ref to prevent concurrent fetches
 
   const allTags = useMemo(() => {
       const tags = new Set<string>();
-      // Use recommendations directly to get all possible tags before filtering
       recommendations.forEach(rec => rec.tags.forEach(tag => tags.add(tag)));
       return Array.from(tags).sort();
   }, [recommendations]);
@@ -90,13 +90,14 @@ export default function DiscoverPage() {
       setSelectedVacation(null);
       setVacations([]);
     }
-  }, [user, firestore, authLoading]); // Removed selectedVacation dependency
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, firestore, authLoading]);
 
    useEffect(() => {
     if (user && firestore) {
       const favoritesQuery = query(collection(firestore, `users/${user.uid}/favoriteLocations`));
       const unsubscribe = onSnapshot(favoritesQuery, (snapshot) => {
-        const favIds = new Set(snapshot.docs.map(doc => doc.id)); // Favorites use locationId as doc ID
+        const favIds = new Set(snapshot.docs.map(doc => doc.id));
         setFavorites(favIds);
       }, (error) => {
         console.error("Error fetching favorites:", error);
@@ -107,7 +108,6 @@ export default function DiscoverPage() {
     }
   }, [user, firestore]);
 
-   // Fetch planned visit IDs for the selected vacation
    useEffect(() => {
      if (user && firestore && selectedVacation) {
        const plannedVisitsQuery = query(
@@ -115,112 +115,126 @@ export default function DiscoverPage() {
          where('vacationId', '==', selectedVacation.id)
        );
        const unsubscribe = onSnapshot(plannedVisitsQuery, (snapshot) => {
-         const visitIds = new Set(snapshot.docs.map(doc => (doc.data() as PlannedVisit).locationId)); // Get locationIds
+         const visitIds = new Set(snapshot.docs.map(doc => (doc.data() as PlannedVisit).locationId));
          setPlannedVisitIds(visitIds);
        }, (error) => {
          console.error("Error fetching planned visits:", error);
        });
        return () => unsubscribe();
      } else {
-       setPlannedVisitIds(new Set()); // Clear planned IDs if no vacation/user
+       setPlannedVisitIds(new Set());
      }
    }, [user, firestore, selectedVacation]);
 
 
-  // Fetch recommendations based on vacation details or submitted search term
-  const fetchRecommendations = useCallback(async (searchQuery?: string, pageToken?: string) => {
-    if (!selectedVacation || !user) {
-         setRecommendations([]);
-         setLoadingRecommendations(false);
-         setNextPageToken(undefined);
+  const fetchRecommendations = useCallback(async (searchQuery?: string, pageToken?: string, isRetry = false) => {
+    if (!selectedVacation || !user || isFetchingRef.current) {
+        if (!pageToken && !isRetry) { // Only clear recommendations if it's a new fetch/switch, not retry/load more
+             setRecommendations([]);
+             setNextPageToken(undefined);
+        }
+        setLoadingRecommendations(false); // Ensure loading stops if preconditions fail
+        setLoadingMore(false);
          return;
     }
 
-      if (!pageToken) { // Only set loading state for the initial fetch
+      isFetchingRef.current = true; // Set fetching flag
+
+      if (!pageToken) {
           setLoadingRecommendations(true);
       } else {
-          setLoadingMore(true); // Set loading more state for subsequent fetches
+          setLoadingMore(true);
       }
 
-      setError(null);
-      // If not paginating, clear existing recommendations
+      // Reset error only for new fetches/searches, not for load more
       if (!pageToken) {
-          setRecommendations([]);
+        setError(null);
+        setRecommendations([]); // Clear existing recommendations only on new search/fetch
       }
 
 
-      // Use search term if provided, otherwise use interests from selected vacation
       const interestsToUse = searchQuery ? [searchQuery] : selectedVacation.interests;
 
       const input = {
         destination: selectedVacation.destination,
-        interests: interestsToUse, // Pass the array of interests or the search query as an array
-        pageToken: pageToken, // Pass the page token if available
+        interests: interestsToUse,
+        pageToken: pageToken,
       };
 
       try {
         const result = await getPlacesRecommendations(input);
-         // Append results if paginating, otherwise replace
          setRecommendations(prev => {
              const existingIds = new Set(prev.map(r => r.id));
              const newRecs = result.recommendations.filter(r => !existingIds.has(r.id));
-             return pageToken ? [...prev, ...newRecs] : newRecs;
+             // Only append if loading more or retrying, otherwise replace
+             return (pageToken || isRetry) ? [...prev, ...newRecs] : newRecs;
          });
-        setNextPageToken(result.nextPageToken); // Update the next page token
+        setNextPageToken(result.nextPageToken);
       } catch (err) {
         console.error("Error fetching recommendations:", err);
-        setError(err instanceof Error ? err.message : "Could not fetch recommendations. Please try again later.");
+        // Set error only if it's not a pagination request that failed
+        if (!pageToken) {
+           setError(err instanceof Error ? err.message : "Could not fetch recommendations. Please try again later.");
+        } else {
+             toast({ title: "Failed to load more recommendations.", description: err instanceof Error ? err.message : undefined, variant: "destructive" });
+             // Reset token so the user might retry manually if needed
+             setNextPageToken(pageToken);
+        }
       } finally {
-         setLoadingRecommendations(false);
-         setLoadingMore(false); // Reset loading more state
+         if (!pageToken) setLoadingRecommendations(false);
+         setLoadingMore(false);
+         isFetchingRef.current = false; // Reset fetching flag
       }
-  }, [selectedVacation, user]);
+  }, [selectedVacation, user, toast]); // Removed isFetchingRef.current from dependencies
 
-  // Initial fetch when vacation changes or search term is cleared
   useEffect(() => {
-      if (selectedVacation) {
-          // Reset recommendations and token when vacation changes or search is cleared
+      if (selectedVacation && !isFetchingRef.current) {
           setRecommendations([]);
           setNextPageToken(undefined);
-          if (submittedSearchTerm === null) {
-              fetchRecommendations(); // Fetch based on vacation details
-          } else {
-              fetchRecommendations(submittedSearchTerm); // Fetch based on current search term
-          }
+          fetchRecommendations(submittedSearchTerm ?? undefined);
       }
-  }, [selectedVacation, submittedSearchTerm, fetchRecommendations]); // Added fetchRecommendations to dependencies
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVacation, submittedSearchTerm]); // fetchRecommendations is memoized
 
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const termToSearch = searchTerm.trim();
-     setRecommendations([]); // Clear existing recommendations on new search
-     setNextPageToken(undefined); // Reset pagination token
-    if (termToSearch) {
-       setSubmittedSearchTerm(termToSearch);
-       fetchRecommendations(termToSearch); // Fetch based on new search term
-    } else {
-        setSubmittedSearchTerm(null);
-        fetchRecommendations(); // Revert to fetching based on vacation details
-    }
+     setRecommendations([]);
+     setNextPageToken(undefined);
+     setSubmittedSearchTerm(termToSearch || null);
+    // Fetching is handled by the useEffect watching submittedSearchTerm
   };
 
-  // Filter recommendations based on active tags AND exclude items already in the plan
   const filteredRecommendations = useMemo(() => {
     let filtered = recommendations;
-
-    // Filter by active tags
     if (activeFilters.size > 0) {
       filtered = filtered.filter(rec =>
         rec.tags.some(tag => activeFilters.has(tag))
       );
     }
-
-    // Filter out items already in the plan
+    // Keep this filter: do not show items already in the plan
     filtered = filtered.filter(rec => !plannedVisitIds.has(rec.id));
-
     return filtered;
-  }, [recommendations, activeFilters, plannedVisitIds]); // Add plannedVisitIds dependency
+  }, [recommendations, activeFilters, plannedVisitIds]);
+
+  const handleLoadMore = useCallback(() => {
+      if (nextPageToken && !loadingMore && !isFetchingRef.current) {
+          fetchRecommendations(submittedSearchTerm ?? undefined, nextPageToken);
+      }
+  }, [nextPageToken, loadingMore, submittedSearchTerm, fetchRecommendations]); // isFetchingRef handled internally
+
+  // Effect to auto-load more if the view is empty
+  useEffect(() => {
+      // Check conditions:
+      // 1. Not currently loading initial recommendations OR loading more.
+      // 2. Filtered recommendations list is empty.
+      // 3. There's a next page token available.
+      if (!loadingRecommendations && !loadingMore && filteredRecommendations.length === 0 && nextPageToken) {
+          console.log("Auto-loading more recommendations...");
+          handleLoadMore();
+      }
+  }, [filteredRecommendations, loadingRecommendations, loadingMore, nextPageToken, handleLoadMore]);
 
 
   const handleFilterToggle = (tag: string) => {
@@ -246,18 +260,17 @@ export default function DiscoverPage() {
               await deleteDoc(favRef);
                toast({ title: `${rec.name} removed from favorites.` });
           } else {
-              const favData: Omit<FavoriteLocation, 'id'> = { // Use Omit as ID is the doc key
+              const favData: Omit<FavoriteLocation, 'id'> = {
                  userId: user.uid,
                  locationId: locationId,
                  name: rec.name,
-                 description: rec.description, // Store description
-                 imageUrl: rec.imageUrl, // Store image URL
-                 dataAiHint: rec.imageSearchHint // Store hint
+                 description: rec.description,
+                 imageUrl: rec.imageUrl,
+                 dataAiHint: rec.imageSearchHint
               };
               await setDoc(favRef, favData);
                toast({ title: `${rec.name} added to favorites!` });
           }
-           // State updates via listener
       } catch (error) {
           console.error("Error updating favorite:", error);
            toast({ title: `Could not update favorite for ${rec.name}.`, variant: "destructive" });
@@ -267,9 +280,8 @@ export default function DiscoverPage() {
   const handlePlanToggle = async (rec: Recommendation) => {
       if (!user || !firestore || !selectedVacation) return;
       const locationId = rec.id;
-      const isInPlan = plannedVisitIds.has(locationId);
+      const isInPlan = plannedVisitIds.has(rec.id);
 
-      // Use a consistent query method to find the existing doc if it exists
       const plannedVisitsQuery = query(
          collection(firestore, `users/${user.uid}/plannedVisits`),
          where('vacationId', '==', selectedVacation.id),
@@ -280,15 +292,13 @@ export default function DiscoverPage() {
       try {
           const snapshot = await getDocs(plannedVisitsQuery);
           if (isInPlan && !snapshot.empty) {
-               // Item exists, delete it
                const docToDelete = snapshot.docs[0];
                await deleteDoc(doc(firestore, `users/${user.uid}/plannedVisits`, docToDelete.id));
                toast({ title: `${rec.name} removed from plan.` });
           } else if (!isInPlan && snapshot.empty) {
-                // Item doesn't exist, add it
-               const planDocRef = doc(collection(firestore, `users/${user.uid}/plannedVisits`)); // Auto-generate ID
-               const planData: PlannedVisit = { // Ensure type includes id
-                   id: planDocRef.id, // Store the generated ID
+               const planDocRef = doc(collection(firestore, `users/${user.uid}/plannedVisits`));
+               const planData: PlannedVisit = {
+                   id: planDocRef.id,
                    userId: user.uid,
                    vacationId: selectedVacation.id,
                    locationId: locationId,
@@ -300,20 +310,11 @@ export default function DiscoverPage() {
                await setDoc(planDocRef, planData);
                 toast({ title: `${rec.name} added to plan!` });
           } else {
-               // Inconsistent state, log warning
                console.warn("Inconsistent state between local plannedVisitIds and Firestore query result for:", locationId);
-               // Optionally force refresh local state
           }
-          // Local state update handled by onSnapshot listener
       } catch (error) {
           console.error("Error updating plan:", error);
            toast({ title: `Could not update plan for ${rec.name}.`, variant: "destructive" });
-      }
-  };
-
-  const handleLoadMore = () => {
-      if (nextPageToken && !loadingMore) {
-          fetchRecommendations(submittedSearchTerm ?? undefined, nextPageToken);
       }
   };
 
@@ -396,7 +397,9 @@ export default function DiscoverPage() {
                        setSelectedVacation(vacation);
                        setSubmittedSearchTerm(null);
                        setSearchTerm('');
-                       setActiveFilters(new Set()); // Reset filters when switching vacation
+                       setActiveFilters(new Set());
+                       setRecommendations([]); // Clear recommendations on vacation switch
+                       setNextPageToken(undefined); // Reset token on vacation switch
                    }}
                    className="truncate"
                  >
@@ -416,7 +419,7 @@ export default function DiscoverPage() {
       <form onSubmit={handleSearchSubmit} className="flex gap-2 sticky top-0 bg-background py-2 z-10">
         <Input
           type="search"
-          placeholder="Search within interests..." // Changed placeholder
+          placeholder="Search for activities or places..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="flex-grow"
@@ -488,7 +491,7 @@ export default function DiscoverPage() {
            <CardContent className="p-6 text-center text-destructive flex flex-col items-center gap-2">
              <BadgeAlert className="h-8 w-8" />
              <p>{error}</p>
-             <Button variant="outline" size="sm" onClick={() => fetchRecommendations(submittedSearchTerm ?? undefined)}>
+             <Button variant="outline" size="sm" onClick={() => fetchRecommendations(submittedSearchTerm ?? undefined, undefined, true)}>
                Retry
              </Button>
            </CardContent>
@@ -503,8 +506,9 @@ export default function DiscoverPage() {
                     <Image
                       src={rec.imageUrl}
                       alt={rec.name}
-                      layout="fill"
-                      objectFit="cover"
+                      width={400} // Provide explicit width
+                      height={300} // Provide explicit height
+                      style={{ objectFit: "cover", width: '100%', height: '100%' }} // Use style for layout="fill" equivalent
                       data-ai-hint={rec.imageSearchHint}
                       className="transition-transform duration-300 ease-in-out group-hover:scale-105"
                       unoptimized
@@ -516,10 +520,11 @@ export default function DiscoverPage() {
                     />
                 ) : (
                    <Image
-                       src={`https://picsum.photos/seed/${rec.id}/400/300`} // Fallback placeholder
+                       src={`https://picsum.photos/seed/${rec.id}/400/300`}
                        alt={`${rec.name} (Placeholder Image)`}
-                       layout="fill"
-                       objectFit="cover"
+                       width={400} // Provide explicit width
+                       height={300} // Provide explicit height
+                       style={{ objectFit: "cover", width: '100%', height: '100%' }} // Use style for layout="fill" equivalent
                        data-ai-hint={rec.imageSearchHint || 'attraction'}
                        className="transition-transform duration-300 ease-in-out group-hover:scale-105"
                        />
@@ -556,7 +561,7 @@ export default function DiscoverPage() {
                <div className="flex justify-center mt-6">
                  <Button
                    onClick={handleLoadMore}
-                   disabled={loadingMore}
+                   disabled={loadingMore || isFetchingRef.current} // Disable while fetching
                    variant="outline"
                  >
                    {loadingMore ? (
@@ -574,9 +579,11 @@ export default function DiscoverPage() {
        ) : (
         <Card className="col-span-full">
             <CardContent className="p-6 text-center text-muted-foreground">
-              {recommendations.length === 0 && !submittedSearchTerm && activeFilters.size === 0 && plannedVisitIds.size === 0
+              {(recommendations.length === 0 && !submittedSearchTerm && activeFilters.size === 0 && !error)
                 ? "No recommendations found based on your vacation details."
-                : "No more recommendations match your current search or filters."
+                : (recommendations.length > 0 && filteredRecommendations.length === 0)
+                    ? "No recommendations match your current filters."
+                    : "No more recommendations found."
               }
               {activeFilters.size > 0 && (
                  <Button variant="link" onClick={() => setActiveFilters(new Set())} className="p-1 text-sm">
@@ -584,7 +591,7 @@ export default function DiscoverPage() {
                  </Button>
               )}
                {submittedSearchTerm && (
-                 <Button variant="link" onClick={() => { setSubmittedSearchTerm(null); setSearchTerm(''); fetchRecommendations(); }} className="p-1 text-sm">
+                 <Button variant="link" onClick={() => { setSubmittedSearchTerm(null); setSearchTerm(''); }} className="p-1 text-sm">
                     Clear Search?
                  </Button>
               )}
