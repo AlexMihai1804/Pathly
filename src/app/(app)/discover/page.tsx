@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import { getFirebase } from '@/firebase';
 import { collection, query, where, getDocs, limit, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { VacationDetails, FavoriteLocation, PlannedVisit } from '@/firebase/types';
 import Image from 'next/image';
-import { generateLocationRecommendations, GenerateLocationRecommendationsOutput } from '@/ai/flows/generate-location-recommendations';
+import { getPlacesRecommendations } from '@/actions/get-places-recommendations'; // Import the server action
 import { useToast } from "@/hooks/use-toast"
 
 
@@ -28,13 +28,14 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
-// Interface matching the Genkit flow output structure
+// Interface matching the structure returned by the server action
 interface Recommendation {
-    id: string;
+    id: string;         // place_id from Google Places
     name: string;
-    description: string;
-    imageSearchHint: string;
-    tags: string[];
+    description: string; // Formatted address or summary
+    imageUrl?: string;   // Optional photo URL (constructed server-side)
+    imageSearchHint: string; // Fallback hint
+    tags: string[];     // Mapped from place types
 }
 
 export default function DiscoverPage() {
@@ -44,8 +45,8 @@ export default function DiscoverPage() {
   const [vacations, setVacations] = useState<VacationDetails[]>([]);
   const [selectedVacation, setSelectedVacation] = useState<VacationDetails | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
-  const [favorites, setFavorites] = useState<Set<string>>(new Set()); // Store IDs of favorited locations
-  const [plannedVisitIds, setPlannedVisitIds] = useState<Set<string>>(new Set()); // Store IDs of planned locations for the selected vacation
+  const [favorites, setFavorites] = useState<Set<string>>(new Set()); // Store place_ids of favorited locations
+  const [plannedVisitIds, setPlannedVisitIds] = useState<Set<string>>(new Set()); // Store place_ids of planned locations
   const [loadingVacations, setLoadingVacations] = useState(true);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,14 +92,14 @@ export default function DiscoverPage() {
       setSelectedVacation(null); // Clear selection if user logs out
       setVacations([]);
     }
-  }, [user, firestore, authLoading]);
+  }, [user, firestore, authLoading]); // Remove selectedVacation dependency here
 
    // Fetch favorites
   useEffect(() => {
     if (user && firestore) {
       const favoritesQuery = query(collection(firestore, `users/${user.uid}/favoriteLocations`));
       const unsubscribe = onSnapshot(favoritesQuery, (snapshot) => {
-        const favIds = new Set(snapshot.docs.map(doc => doc.id)); // locationId is the doc id
+        const favIds = new Set(snapshot.docs.map(doc => doc.id)); // locationId (place_id) is the doc id
         setFavorites(favIds);
       }, (error) => {
         console.error("Error fetching favorites:", error);
@@ -129,8 +130,8 @@ export default function DiscoverPage() {
    }, [user, firestore, selectedVacation]); // Re-run when selectedVacation changes
 
 
-  // Generate recommendations when selected vacation changes
-  useEffect(() => {
+  // Fetch recommendations when selected vacation changes
+  const fetchRecommendations = useCallback(async () => {
     if (selectedVacation && user) {
       setLoadingRecommendations(true);
       setError(null);
@@ -138,26 +139,29 @@ export default function DiscoverPage() {
 
       const input = {
         destination: selectedVacation.destination,
-        dates: selectedVacation.dates,
+        // dates: selectedVacation.dates, // Can uncomment if needed by API later
         interests: selectedVacation.interests,
       };
 
-      generateLocationRecommendations(input)
-        .then(result => {
-          setRecommendations(result.recommendations);
-        })
-        .catch(err => {
-          console.error("Error generating recommendations:", err);
-          setError("Could not generate recommendations. Please try again later.");
-        })
-        .finally(() => {
-          setLoadingRecommendations(false);
-        });
+      try {
+        const result = await getPlacesRecommendations(input); // Call the server action
+        setRecommendations(result.recommendations);
+      } catch (err) {
+        console.error("Error fetching recommendations:", err);
+        setError(err instanceof Error ? err.message : "Could not fetch recommendations. Please try again later.");
+      } finally {
+        setLoadingRecommendations(false);
+      }
     } else {
-       setRecommendations([]); // Clear recommendations if no vacation selected
-        setLoadingRecommendations(false); // Ensure loading stops
+      setRecommendations([]); // Clear recommendations if no vacation selected
+      setLoadingRecommendations(false); // Ensure loading stops
     }
-  }, [selectedVacation, user]); // Re-run only when selected vacation changes
+  }, [selectedVacation, user]); // Dependencies for the fetch function itself
+
+  useEffect(() => {
+    fetchRecommendations(); // Call the fetch function
+  }, [fetchRecommendations]); // Rerun the effect when the fetch function changes (due to dependencies)
+
 
   const filteredRecommendations = useMemo(() => {
      let filtered = recommendations;
@@ -167,7 +171,8 @@ export default function DiscoverPage() {
        const lowerSearchTerm = searchTerm.toLowerCase();
        filtered = filtered.filter(rec =>
          rec.name.toLowerCase().includes(lowerSearchTerm) ||
-         rec.description.toLowerCase().includes(lowerSearchTerm)
+         rec.description.toLowerCase().includes(lowerSearchTerm) ||
+         rec.tags.some(tag => tag.toLowerCase().includes(lowerSearchTerm)) // Search tags too
        );
      }
 
@@ -196,7 +201,7 @@ export default function DiscoverPage() {
 
   const handleFavoriteToggle = async (rec: Recommendation) => {
       if (!user || !firestore) return;
-      const locationId = rec.id;
+      const locationId = rec.id; // place_id
       const isFavorited = favorites.has(locationId);
       const favRef = doc(firestore, `users/${user.uid}/favoriteLocations`, locationId);
 
@@ -209,8 +214,12 @@ export default function DiscoverPage() {
                  userId: user.uid,
                  locationId: locationId,
                  name: rec.name, // Denormalize name
+                 // Add description and imageUrl if needed for Favorites page display
+                 description: rec.description,
+                 imageUrl: rec.imageUrl,
+                 dataAiHint: rec.imageSearchHint
               };
-              await setDoc(favRef, favData); // Use locationId as doc ID
+              await setDoc(favRef, favData); // Use locationId (place_id) as doc ID
                toast({ title: `${rec.name} added to favorites!` });
           }
           // Local state update is handled by the onSnapshot listener
@@ -222,7 +231,7 @@ export default function DiscoverPage() {
 
   const handlePlanToggle = async (rec: Recommendation) => {
       if (!user || !firestore || !selectedVacation) return;
-      const locationId = rec.id;
+      const locationId = rec.id; // place_id
       const isInPlan = plannedVisitIds.has(locationId);
       // Generate a unique ID for the plan item, perhaps combining vacation and location ID
        const planItemId = `${selectedVacation.id}_${locationId}`;
@@ -238,8 +247,10 @@ export default function DiscoverPage() {
                    vacationId: selectedVacation.id,
                    locationId: locationId,
                    locationName: rec.name, // Denormalize
-                    // For image, maybe pick first from recommendation if available, or leave empty
-                   locationImageUrl: `https://picsum.photos/seed/${locationId}/200/200`, // Placeholder
+                   locationImageUrl: rec.imageUrl || `https://picsum.photos/seed/${locationId}/200/200`, // Use API image or placeholder
+                   // Include other fields if needed by the Plan page, e.g., description
+                   description: rec.description,
+                   dataAiHint: rec.imageSearchHint,
                };
                await setDoc(planRef, planData);
                 toast({ title: `${rec.name} added to plan!` });
@@ -261,8 +272,12 @@ export default function DiscoverPage() {
               <Skeleton className="h-6 w-3/4 mb-2" />
               <Skeleton className="h-4 w-full" />
               <Skeleton className="h-4 w-1/2 mt-1" />
+               <div className="flex gap-2 mt-3">
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                    <Skeleton className="h-5 w-20 rounded-full" />
+                </div>
             </CardContent>
-            <CardFooter className="flex justify-between p-4 bg-muted/50 border-t">
+            <CardFooter className="flex justify-between p-3 bg-muted/50 border-t">
               <Skeleton className="h-8 w-8 rounded-full" />
               <Skeleton className="h-8 w-8 rounded-full" />
             </CardFooter>
@@ -274,12 +289,12 @@ export default function DiscoverPage() {
   if (authLoading || loadingVacations) {
     return (
       <div className="p-4 space-y-4">
-        <Skeleton className="h-10 w-1/2 mx-auto" />
+        <Skeleton className="h-10 w-full md:w-1/2 mx-auto" />
         <div className="flex gap-2">
           <Skeleton className="h-10 flex-grow" />
           <Skeleton className="h-10 w-10" />
         </div>
-        {renderLoadingSkeletons(4)}
+        {renderLoadingSkeletons(6)}
       </div>
     );
   }
@@ -410,7 +425,7 @@ export default function DiscoverPage() {
            <CardContent className="p-6 text-center text-destructive flex flex-col items-center gap-2">
              <BadgeAlert className="h-8 w-8" />
              <p>{error}</p>
-             <Button variant="outline" size="sm" onClick={() => { /* Add retry logic here if desired */ setError(null); setLoadingRecommendations(true); /* re-trigger useEffect */ }}>
+             <Button variant="outline" size="sm" onClick={fetchRecommendations}>
                Retry
              </Button>
            </CardContent>
@@ -419,19 +434,37 @@ export default function DiscoverPage() {
          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
            {filteredRecommendations.map((rec) => (
              <Card key={rec.id} className="overflow-hidden shadow-md flex flex-col group">
-              <CardHeader className="p-0 relative aspect-video overflow-hidden">
-                <Image
-                   src={`https://picsum.photos/seed/${rec.id}/400/300`} // Placeholder image
-                  alt={rec.name}
-                  layout="fill"
-                  objectFit="cover"
-                   data-ai-hint={rec.imageSearchHint || 'travel destination'}
-                  className="transition-transform duration-300 ease-in-out group-hover:scale-105 bg-muted"
-                />
+              <CardHeader className="p-0 relative aspect-video overflow-hidden bg-muted">
+                {rec.imageUrl ? (
+                    <Image
+                      src={rec.imageUrl} // Use the URL from Google Places API
+                      alt={rec.name}
+                      layout="fill"
+                      objectFit="cover"
+                      data-ai-hint={rec.imageSearchHint}
+                      className="transition-transform duration-300 ease-in-out group-hover:scale-105"
+                      unoptimized // Consider if optimization is needed/possible with Maps API URLs
+                       // Add error handling for images
+                       onError={(e) => {
+                           const target = e.target as HTMLImageElement;
+                           target.src = `https://picsum.photos/seed/${rec.id}/400/300`; // Fallback placeholder
+                           target.alt = `${rec.name} (Placeholder Image)`;
+                         }}
+                    />
+                ) : (
+                   <Image
+                       src={`https://picsum.photos/seed/${rec.id}/400/300`} // Fallback placeholder
+                       alt={`${rec.name} (Placeholder Image)`}
+                       layout="fill"
+                       objectFit="cover"
+                       data-ai-hint={rec.imageSearchHint || 'attraction'}
+                       className="transition-transform duration-300 ease-in-out group-hover:scale-105"
+                       />
+                )}
               </CardHeader>
               <CardContent className="p-4 flex-grow">
                 <CardTitle className="text-lg font-semibold mb-1">{rec.name}</CardTitle>
-                <p className="text-sm text-muted-foreground mb-2">{rec.description}</p>
+                <p className="text-sm text-muted-foreground mb-2 line-clamp-3">{rec.description}</p>
                  <div className="flex flex-wrap gap-1">
                     {rec.tags.map(tag => (
                         <Badge key={tag} variant="outline" className="text-xs capitalize">{tag}</Badge>
@@ -459,7 +492,7 @@ export default function DiscoverPage() {
         <Card className="col-span-full">
             <CardContent className="p-6 text-center text-muted-foreground">
               {recommendations.length === 0 && !searchTerm && activeFilters.size === 0
-                ? "No recommendations generated for this trip yet."
+                ? "No recommendations found for this destination and interests."
                 : "No recommendations match your current search or filters."
               }
               {activeFilters.size > 0 && (
@@ -473,5 +506,3 @@ export default function DiscoverPage() {
     </div>
   );
 }
-
-    
