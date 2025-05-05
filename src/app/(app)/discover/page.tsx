@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Heart, Plus, MapPin, Filter, BadgeAlert, ListPlus, X } from 'lucide-react';
+import { Heart, Plus, MapPin, Filter, BadgeAlert, ListPlus, X, Search as SearchIcon } from 'lucide-react'; // Added SearchIcon
 import { Skeleton } from '@/components/ui/skeleton';
 import { getFirebase } from '@/firebase';
 import { collection, query, where, getDocs, limit, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -51,6 +51,7 @@ export default function DiscoverPage() {
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [submittedSearchTerm, setSubmittedSearchTerm] = useState<string | null>(null); // Track submitted search term
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set()); // Store active filter tags
   const { firestore } = getFirebase();
 
@@ -77,7 +78,7 @@ export default function DiscoverPage() {
           const fetchedVacations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as VacationDetails));
           setVacations(fetchedVacations);
            // If no vacation is selected or the selected one is deleted, select the first one
-           if (!selectedVacation || !fetchedVacations.some(v => v.id === selectedVacation.id)) {
+           if (!selectedVacation || !fetchedVacations.some(v => v.id === selectedVacation?.id)) {
                setSelectedVacation(fetchedVacations.length > 0 ? fetchedVacations[0] : null);
            }
           setLoadingVacations(false);
@@ -92,7 +93,8 @@ export default function DiscoverPage() {
       setSelectedVacation(null); // Clear selection if user logs out
       setVacations([]);
     }
-  }, [user, firestore, authLoading]); // Remove selectedVacation dependency here
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, firestore, authLoading]); // selectedVacation removed to prevent loop
 
    // Fetch favorites
   useEffect(() => {
@@ -130,8 +132,9 @@ export default function DiscoverPage() {
    }, [user, firestore, selectedVacation]); // Re-run when selectedVacation changes
 
 
-  // Fetch recommendations when selected vacation changes
-  const fetchRecommendations = useCallback(async () => {
+  // Fetch recommendations based on vacation details or submitted search term
+  const fetchRecommendations = useCallback(async (searchQuery?: string) => {
+    // Use selectedVacation for destination context, even if searching
     if (selectedVacation && user) {
       setLoadingRecommendations(true);
       setError(null);
@@ -139,8 +142,8 @@ export default function DiscoverPage() {
 
       const input = {
         destination: selectedVacation.destination,
-        // dates: selectedVacation.dates, // Can uncomment if needed by API later
-        interests: selectedVacation.interests,
+        // Use search query if provided, otherwise default interests
+        interests: searchQuery ?? selectedVacation.interests,
       };
 
       try {
@@ -158,25 +161,33 @@ export default function DiscoverPage() {
     }
   }, [selectedVacation, user]); // Dependencies for the fetch function itself
 
+  // Initial fetch when vacation changes
   useEffect(() => {
-    fetchRecommendations(); // Call the fetch function
-  }, [fetchRecommendations]); // Rerun the effect when the fetch function changes (due to dependencies)
+    if (selectedVacation && submittedSearchTerm === null) { // Only fetch based on vacation if no search is active
+        fetchRecommendations();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVacation, submittedSearchTerm]); // Re-run when selected vacation changes or search term is cleared
 
+  // Handle search form submission
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const termToSearch = searchTerm.trim();
+    if (termToSearch) {
+       setSubmittedSearchTerm(termToSearch); // Set the submitted term
+       fetchRecommendations(termToSearch); // Fetch based on search term
+    } else {
+        // If search is cleared, revert to fetching based on vacation details
+        setSubmittedSearchTerm(null);
+        fetchRecommendations();
+    }
+  };
 
+  // Apply client-side filtering (e.g., by tags) AFTER recommendations are fetched
   const filteredRecommendations = useMemo(() => {
      let filtered = recommendations;
 
-     // Apply search term filter
-      if (searchTerm.trim()) {
-       const lowerSearchTerm = searchTerm.toLowerCase();
-       filtered = filtered.filter(rec =>
-         rec.name.toLowerCase().includes(lowerSearchTerm) ||
-         rec.description.toLowerCase().includes(lowerSearchTerm) ||
-         rec.tags.some(tag => tag.toLowerCase().includes(lowerSearchTerm)) // Search tags too
-       );
-     }
-
-      // Apply tag filters
+      // Apply tag filters (search term filter is now handled by API call)
       if (activeFilters.size > 0) {
           filtered = filtered.filter(rec =>
               rec.tags.some(tag => activeFilters.has(tag))
@@ -184,7 +195,7 @@ export default function DiscoverPage() {
       }
 
      return filtered;
-  }, [recommendations, searchTerm, activeFilters]);
+  }, [recommendations, activeFilters]);
 
 
   const handleFilterToggle = (tag: string) => {
@@ -210,14 +221,20 @@ export default function DiscoverPage() {
               await deleteDoc(favRef);
                toast({ title: `${rec.name} removed from favorites.` });
           } else {
-              const favData: Omit<FavoriteLocation, 'id'> = { // Assuming 'id' is generated or same as locationId
+              const favData: Omit<FavoriteLocation, 'id' | 'imageUrl' | 'description' | 'dataAiHint'> & { // Ensure required fields match schema
+                 userId: string;
+                 locationId: string;
+                 name: string;
+                 imageUrl?: string; // Add optional fields if needed in Favorites
+                 description?: string;
+                 dataAiHint?: string;
+              } = { // Assuming 'id' is locationId
                  userId: user.uid,
                  locationId: locationId,
                  name: rec.name, // Denormalize name
-                 // Add description and imageUrl if needed for Favorites page display
-                 description: rec.description,
-                 imageUrl: rec.imageUrl,
-                 dataAiHint: rec.imageSearchHint
+                 imageUrl: rec.imageUrl, // Optional: store image URL
+                 description: rec.description, // Optional: store description
+                 dataAiHint: rec.imageSearchHint // Optional: store hint
               };
               await setDoc(favRef, favData); // Use locationId (place_id) as doc ID
                toast({ title: `${rec.name} added to favorites!` });
@@ -248,9 +265,8 @@ export default function DiscoverPage() {
                    locationId: locationId,
                    locationName: rec.name, // Denormalize
                    locationImageUrl: rec.imageUrl || `https://picsum.photos/seed/${locationId}/200/200`, // Use API image or placeholder
-                   // Include other fields if needed by the Plan page, e.g., description
-                   description: rec.description,
-                   dataAiHint: rec.imageSearchHint,
+                   description: rec.description, // Denormalize description
+                   dataAiHint: rec.imageSearchHint, // Store hint
                };
                await setDoc(planRef, planData);
                 toast({ title: `${rec.name} added to plan!` });
@@ -337,7 +353,11 @@ export default function DiscoverPage() {
                  <DropdownMenuCheckboxItem
                    key={vacation.id}
                    checked={selectedVacation?.id === vacation.id}
-                   onCheckedChange={() => setSelectedVacation(vacation)}
+                   onCheckedChange={() => {
+                       setSelectedVacation(vacation);
+                       setSubmittedSearchTerm(null); // Reset search when switching vacation
+                       setSearchTerm(''); // Clear search input
+                   }}
                    className="truncate"
                  >
                    {vacation.destination} ({vacation.dates})
@@ -353,19 +373,22 @@ export default function DiscoverPage() {
        </div>
 
       {/* Search and Filter Bar */}
-      <div className="flex gap-2 sticky top-0 bg-background py-2 z-10">
+      <form onSubmit={handleSearchSubmit} className="flex gap-2 sticky top-0 bg-background py-2 z-10">
         <Input
           type="search"
-          placeholder="Search recommendations..."
+          placeholder="Search for places..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="flex-grow"
+          aria-label="Search for places"
         />
+        <Button type="submit" size="icon" aria-label="Submit search">
+           <SearchIcon className="h-4 w-4" />
+        </Button>
          <DropdownMenu>
            <DropdownMenuTrigger asChild>
-             <Button variant="outline" size="icon" disabled={loadingRecommendations || allTags.length === 0}>
+             <Button variant="outline" size="icon" disabled={loadingRecommendations || allTags.length === 0} aria-label="Filter results by tag">
                <Filter className="h-4 w-4" />
-               <span className="sr-only">Filters</span>
                {activeFilters.size > 0 && (
                    <Badge variant="destructive" className="absolute -top-1 -right-1 h-4 w-4 p-0 flex items-center justify-center text-xs">
                     {activeFilters.size}
@@ -396,7 +419,7 @@ export default function DiscoverPage() {
                )}
            </DropdownMenuContent>
          </DropdownMenu>
-      </div>
+      </form>
 
        {/* Active Filters Display */}
         {activeFilters.size > 0 && (
@@ -409,6 +432,7 @@ export default function DiscoverPage() {
                             size="icon"
                             className="h-4 w-4 ml-1 p-0"
                             onClick={() => handleFilterToggle(tag)}
+                            aria-label={`Remove ${tag} filter`}
                         >
                             <X className="h-3 w-3" />
                         </Button>
@@ -425,7 +449,7 @@ export default function DiscoverPage() {
            <CardContent className="p-6 text-center text-destructive flex flex-col items-center gap-2">
              <BadgeAlert className="h-8 w-8" />
              <p>{error}</p>
-             <Button variant="outline" size="sm" onClick={fetchRecommendations}>
+             <Button variant="outline" size="sm" onClick={() => fetchRecommendations(submittedSearchTerm ?? undefined)}>
                Retry
              </Button>
            </CardContent>
@@ -491,13 +515,18 @@ export default function DiscoverPage() {
        ) : (
         <Card className="col-span-full">
             <CardContent className="p-6 text-center text-muted-foreground">
-              {recommendations.length === 0 && !searchTerm && activeFilters.size === 0
-                ? "No recommendations found for this destination and interests."
+              {recommendations.length === 0 && !submittedSearchTerm && activeFilters.size === 0
+                ? "No recommendations found based on your vacation details."
                 : "No recommendations match your current search or filters."
               }
               {activeFilters.size > 0 && (
                  <Button variant="link" onClick={() => setActiveFilters(new Set())} className="p-1 text-sm">
                     Clear Filters?
+                 </Button>
+              )}
+               {submittedSearchTerm && (
+                 <Button variant="link" onClick={() => { setSubmittedSearchTerm(null); setSearchTerm(''); fetchRecommendations(); }} className="p-1 text-sm">
+                    Clear Search?
                  </Button>
               )}
             </CardContent>
@@ -506,3 +535,5 @@ export default function DiscoverPage() {
     </div>
   );
 }
+
+    
