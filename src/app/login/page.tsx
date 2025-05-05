@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { getFirebase } from '@/firebase';
-import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signInAnonymously } from 'firebase/auth';
+import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signInAnonymously, AuthErrorCodes } from 'firebase/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
@@ -17,6 +17,22 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const { auth } = getFirebase(); // Ensure auth is initialized before use
 
+  const handleLoginError = (err: any, method: string) => {
+     console.error(`${method} login error:`, err);
+     if (err.code === AuthErrorCodes.NETWORK_REQUEST_FAILED) {
+       setError('Network error. Please check your internet connection and try again.');
+     } else if (err.code === AuthErrorCodes.INVALID_API_KEY) {
+        setError('Invalid Firebase API Key. Please check your configuration.');
+     } else if (err.code === AuthErrorCodes.POPUP_CLOSED_BY_USER || err.code === 'auth/cancelled-popup-request') {
+         // Don't show an error message if the user intentionally closed the popup
+         setError(null);
+     }
+      else {
+       setError(err.message || `Failed to sign in with ${method}.`);
+     }
+   };
+
+
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -28,8 +44,7 @@ export default function LoginPage() {
       await signInWithEmailAndPassword(auth, email, password);
       // Auth state change will handle redirect
     } catch (err: any) {
-      console.error("Email login error:", err);
-      setError(err.message || 'Failed to sign in with email.');
+      handleLoginError(err, 'email');
     }
   };
 
@@ -44,10 +59,7 @@ export default function LoginPage() {
       await signInWithPopup(auth, provider);
       // Auth state change will handle redirect
     } catch (err: any) {
-      console.error("Google login error:", err);
-       if (err.code !== 'auth/popup-closed-by-user') {
-         setError(err.message || 'Failed to sign in with Google.');
-       }
+       handleLoginError(err, 'Google');
     }
   };
 
@@ -61,8 +73,7 @@ export default function LoginPage() {
       await signInAnonymously(auth);
       // Auth state change will handle redirect
     } catch (err: any) {
-      console.error("Anonymous login error:", err); // Log the specific error
-      setError(err.message || 'Failed to sign in anonymously.');
+        handleLoginError(err, 'anonymous');
     }
   };
 
