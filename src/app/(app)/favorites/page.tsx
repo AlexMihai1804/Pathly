@@ -5,7 +5,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Heart, ListChecks, Trash2 } from 'lucide-react';
+import { ListChecks, Trash2 } from 'lucide-react'; // Removed Heart as we are removing from favorites here
 import { Skeleton } from '@/components/ui/skeleton';
 import Image from 'next/image'; // Using next/image
 
@@ -21,8 +21,9 @@ interface FavoriteItem {
 
 // Placeholder data - replace with actual Firestore fetching
 const placeholderFavorites: FavoriteItem[] = [
-  { id: 'fav1', locationId: '1', name: 'Eiffel Tower', description: 'Iconic landmark in Paris.', imageUrl: '/placeholder-1.jpg', dataAiHint: 'eiffel tower'},
-  { id: 'fav2', locationId: '3', name: 'Seine River Cruise', description: 'Enjoy the views from the water.', imageUrl: '/placeholder-4.jpg', dataAiHint: 'seine river'},
+  { id: 'fav1', locationId: '1', name: 'Eiffel Tower', description: 'Iconic landmark in Paris.', imageUrl: 'placeholder-1.jpg', dataAiHint: 'eiffel tower'},
+  { id: 'fav2', locationId: '3', name: 'Seine River Cruise', description: 'Enjoy the views from the water.', imageUrl: 'placeholder-4.jpg', dataAiHint: 'seine river'},
+  { id: 'fav3', locationId: '5', name: 'Local Parisian Cafe', description: 'Experience authentic French coffee culture.', imageUrl: 'cafe_1.jpg', dataAiHint: 'paris cafe'},
 ];
 
 export default function FavoritesPage() {
@@ -45,6 +46,8 @@ export default function FavoritesPage() {
            setLoading(false);
        }, 1200);
         return () => clearTimeout(timer);
+    } else if (!authLoading && !user) {
+        setLoading(false); // Stop loading if user is confirmed absent
     }
   }, [user, authLoading, router]);
 
@@ -85,7 +88,7 @@ export default function FavoritesPage() {
   }
 
   return (
-    <div className="p-4 pt-10">
+    <div className="p-4 pt-10 pb-20 md:pb-4"> {/* Added padding-bottom */}
       <h1 className="text-2xl font-bold mb-6 text-center text-primary">Your Favorite Places</h1>
 
       {favorites.length > 0 ? (
@@ -98,14 +101,15 @@ export default function FavoritesPage() {
                   alt={fav.name}
                   layout="fill"
                   objectFit="cover"
-                  data-ai-hint={fav.dataAiHint || 'landmark building'}
+                  data-ai-hint={fav.dataAiHint || 'favorite place'}
+                  className="bg-muted" // Add background color while loading
                 />
               </div>
               <div className="flex-grow">
                 <CardTitle className="text-lg font-semibold mb-1">{fav.name}</CardTitle>
                 <p className="text-sm text-muted-foreground">{fav.description}</p>
               </div>
-              <div className="flex flex-col sm:flex-col justify-between items-end shrink-0 gap-2 mt-2 sm:mt-0">
+              <div className="flex flex-row sm:flex-col justify-between items-center sm:items-end shrink-0 gap-2 mt-2 sm:mt-0">
                  <Button variant="ghost" size="icon" onClick={() => handleAddToPlan(fav.locationId)} aria-label={`Add ${fav.name} to plan`}>
                   <ListChecks className="h-5 w-5 text-muted-foreground hover:text-primary" />
                 </Button>

@@ -22,8 +22,8 @@ interface PlannedItem {
 
 // Placeholder data - replace with actual Firestore fetching from a user's plan collection
 const placeholderPlan: PlannedItem[] = [
-  { id: 'plan1', locationId: '2', name: 'Louvre Museum', description: 'World-renowned art museum.', imageUrl: '/placeholder-3.jpg', dataAiHint: 'louvre museum' },
-  { id: 'plan2', locationId: '1', name: 'Eiffel Tower', description: 'Iconic landmark in Paris.', imageUrl: '/placeholder-1.jpg', dataAiHint: 'eiffel tower'},
+  { id: 'plan1', locationId: '2', name: 'Louvre Museum', description: 'World-renowned art museum.', imageUrl: 'placeholder-3.jpg', dataAiHint: 'louvre museum' },
+  { id: 'plan2', locationId: '1', name: 'Eiffel Tower', description: 'Iconic landmark in Paris.', imageUrl: 'placeholder-1.jpg', dataAiHint: 'eiffel tower'},
 ];
 
 export default function PlanPage() {
@@ -45,6 +45,8 @@ export default function PlanPage() {
           setLoading(false);
       }, 800);
       return () => clearTimeout(timer);
+    } else if (!authLoading && !user) {
+        setLoading(false); // Stop loading if user is confirmed absent
     }
   }, [user, authLoading, router]);
 
@@ -81,7 +83,7 @@ export default function PlanPage() {
   }
 
   return (
-    <div className="p-4 pt-10">
+    <div className="p-4 pt-10 pb-20 md:pb-4"> {/* Added padding-bottom */}
       <h1 className="text-2xl font-bold mb-6 text-center text-primary">Your Vacation Plan</h1>
 
       {plannedItems.length > 0 ? (
@@ -94,11 +96,13 @@ export default function PlanPage() {
                   alt={item.name}
                   layout="fill"
                   objectFit="cover"
-                  data-ai-hint={item.dataAiHint || 'travel place'}
+                  data-ai-hint={item.dataAiHint || 'planned visit'}
+                  className="bg-muted" // Add background color while loading
                  />
                </div>
               <div className="flex-grow">
                 <CardTitle className="text-md font-semibold">{item.name}</CardTitle>
+                 <p className="text-sm text-muted-foreground line-clamp-1">{item.description}</p>
                 {/* Add more details like duration later */}
               </div>
               <Button variant="ghost" size="icon" onClick={() => handleRemoveFromPlan(item.id)} aria-label={`Remove ${item.name} from plan`}>

@@ -27,16 +27,20 @@ interface Attraction {
     id: string;
     name: string;
     description: string;
-    images: string[];
+    images: string[]; // Now an array of potential image URLs (placeholders)
     dataAiHint?: string; // Optional AI hint for image search
+    tags?: string[]; // Optional tags for filtering
 }
 
 // Placeholder data - replace with actual data fetching
 const placeholderAttractions: Attraction[] = [
-  { id: '1', name: 'Eiffel Tower', description: 'Iconic landmark in Paris.', images: ['/placeholder-1.jpg', '/placeholder-2.jpg'], dataAiHint: 'eiffel tower' },
-  { id: '2', name: 'Louvre Museum', description: 'World-renowned art museum.', images: ['/placeholder-3.jpg'], dataAiHint: 'louvre museum' },
-  { id: '3', name: 'Seine River Cruise', description: 'Enjoy the views from the water.', images: ['/placeholder-4.jpg', '/placeholder-5.jpg'], dataAiHint: 'seine river' },
-   { id: '4', name: 'Notre Dame Cathedral', description: 'Historic Catholic cathedral.', images: ['/placeholder-6.jpg'], dataAiHint: 'notre dame' },
+  { id: '1', name: 'Eiffel Tower', description: 'Iconic landmark in Paris.', images: ['eiffel_tower_1.jpg', 'eiffel_tower_2.jpg'], dataAiHint: 'eiffel tower', tags: ['landmark', 'outdoors'] },
+  { id: '2', name: 'Louvre Museum', description: 'World-renowned art museum.', images: ['louvre_1.jpg'], dataAiHint: 'louvre museum', tags: ['museum', 'art', 'culture'] },
+  { id: '3', name: 'Seine River Cruise', description: 'Enjoy the views from the water.', images: ['seine_cruise_1.jpg', 'seine_cruise_2.jpg'], dataAiHint: 'seine river', tags: ['outdoors', 'romantic'] },
+  { id: '4', name: 'Notre Dame Cathedral', description: 'Historic Catholic cathedral.', images: ['notre_dame_1.jpg'], dataAiHint: 'notre dame', tags: ['landmark', 'culture', 'history'] },
+  { id: '5', name: 'Local Parisian Cafe', description: 'Experience authentic French coffee culture.', images: ['cafe_1.jpg'], dataAiHint: 'paris cafe', tags: ['food', 'culture'] },
+  { id: '6', name: 'Montmartre Walk', description: 'Explore the artistic hill with stunning views.', images: ['montmartre_1.jpg'], dataAiHint: 'montmartre paris', tags: ['outdoors', 'art', 'history'] },
+
 ];
 
 
@@ -53,7 +57,7 @@ export default function DiscoverPage() {
       museums: false,
       outdoors: false,
       food: false,
-  }); // Example filters
+  }); // Filters state
   const { firestore } = getFirebase();
 
 
@@ -76,36 +80,61 @@ export default function DiscoverPage() {
           if (fetchedVacations.length > 0) {
             setSelectedVacationId(fetchedVacations[0].id); // Select first vacation by default
           } else {
-             router.replace('/vacation-details'); // Redirect if no vacations found
+             // Redirect if no vacations found - handled by page.tsx now
           }
         })
         .catch(error => console.error("Error fetching vacations:", error))
         .finally(() => setLoadingVacations(false));
+    } else if (!authLoading && !user) {
+      setLoadingVacations(false); // Stop loading if user is confirmed absent
     }
-  }, [user, firestore, router]);
+  }, [user, firestore, authLoading]); // Added authLoading dependency
 
-   // Fetch attractions based on selected vacation, search, and filters (placeholder logic)
+   // Fetch attractions based on selected vacation, search, and filters
   useEffect(() => {
     if (selectedVacationId) {
       setLoadingAttractions(true);
-      // --- Placeholder Fetching Logic ---
-      // In a real app, you'd fetch attractions based on selectedVacationId, searchTerm, filters
-      // from your backend or an external API.
-      console.log("Fetching attractions for:", selectedVacationId, "Search:", searchTerm, "Filters:", filters);
-      // Simulating network delay
+      // --- Placeholder Fetching & Filtering Logic ---
+      console.log("Fetching/Filtering attractions for:", selectedVacationId, "Search:", searchTerm, "Filters:", filters);
+
       const timer = setTimeout(() => {
-        // Filter placeholder data based on search term (simple example)
-        const filteredAttractions = placeholderAttractions.filter(att =>
-          att.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          att.description.toLowerCase().includes(searchTerm.toLowerCase())
-        );
+        let filteredAttractions = placeholderAttractions;
+
+        // Apply search term filter
+        if (searchTerm.trim()) {
+          filteredAttractions = filteredAttractions.filter(att =>
+            att.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            att.description.toLowerCase().includes(searchTerm.toLowerCase())
+          );
+        }
+
+        // Apply tag-based filters (example)
+        const activeFilters = Object.entries(filters)
+            .filter(([, isActive]) => isActive)
+            .map(([key]) => key); // Get keys of active filters
+
+        if (activeFilters.length > 0) {
+             // Map filter keys to potential tags
+             const filterTags: Record<string, string[]> = {
+                museums: ['museum', 'art', 'history'],
+                outdoors: ['outdoors', 'landmark', 'nature'],
+                food: ['food', 'cafe', 'restaurant'],
+             }
+            filteredAttractions = filteredAttractions.filter(att =>
+              activeFilters.some(filterKey =>
+                 att.tags?.some(tag => filterTags[filterKey]?.includes(tag))
+               )
+            );
+        }
+
         setAttractions(filteredAttractions);
         setLoadingAttractions(false);
-      }, 1000);
+      }, 500); // Reduced delay for faster feedback
+
        return () => clearTimeout(timer); // Cleanup timer
       // --- End Placeholder ---
     }
-  }, [selectedVacationId, searchTerm, filters]); // Re-fetch when these change
+  }, [selectedVacationId, searchTerm, filters]); // Re-run when these change
 
 
   const handleFilterChange = (filterKey: string) => {
@@ -151,7 +180,7 @@ export default function DiscoverPage() {
   }
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 space-y-4 pb-20 md:pb-4"> {/* Added padding-bottom */}
       {/* Vacation Selector Dropdown */}
       <div className="flex justify-center mb-4">
          {vacations.length > 0 && (
@@ -206,13 +235,13 @@ export default function DiscoverPage() {
                checked={filters.museums}
                onCheckedChange={() => handleFilterChange('museums')}
              >
-               Museums
+               Museums/Art/Culture
              </DropdownMenuCheckboxItem>
              <DropdownMenuCheckboxItem
                checked={filters.outdoors}
                 onCheckedChange={() => handleFilterChange('outdoors')}
              >
-               Outdoors
+               Outdoors/Landmarks
              </DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem
                checked={filters.food}
@@ -244,25 +273,29 @@ export default function DiscoverPage() {
        ) : attractions.length > 0 ? (
          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
            {attractions.map((attraction) => (
-             <Card key={attraction.id} className="overflow-hidden shadow-md flex flex-col">
-              <CardHeader className="p-0 relative aspect-video">
-                {/* Basic Image Carousel Placeholder - Implement with a library later */}
+             <Card key={attraction.id} className="overflow-hidden shadow-md flex flex-col group"> {/* Added group class */}
+              <CardHeader className="p-0 relative aspect-video overflow-hidden"> {/* Added overflow-hidden */}
+                {/* Display first image */}
                 <Image
-                  // Use picsum for placeholders if local images aren't available yet
-                  src={`https://picsum.photos/seed/${attraction.id}/400/300`}
+                  src={`https://picsum.photos/seed/${attraction.id}img1/400/300`} // Use first image URL or placeholder
                   alt={attraction.name}
                   layout="fill" // Use fill layout for aspect ratio
                   objectFit="cover" // Cover the area
-                  data-ai-hint={attraction.dataAiHint || 'landmark'}
-                  className="transition-transform duration-300 ease-in-out group-hover:scale-105"
+                  data-ai-hint={attraction.dataAiHint || 'landmark building'}
+                  className="transition-transform duration-300 ease-in-out group-hover:scale-105" // Group hover effect
                 />
-                 {/* Add navigation buttons if multiple images */}
+                 {/* Placeholder for multiple images indicator */}
+                {attraction.images.length > 1 && (
+                  <span className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-1.5 py-0.5 rounded">
+                    1 / {attraction.images.length}
+                  </span>
+                 )}
               </CardHeader>
               <CardContent className="p-4 flex-grow">
                 <CardTitle className="text-lg font-semibold mb-1">{attraction.name}</CardTitle>
                 <p className="text-sm text-muted-foreground">{attraction.description}</p>
               </CardContent>
-              <CardFooter className="flex justify-between p-4 bg-muted/50">
+              <CardFooter className="flex justify-between p-4 bg-muted/50 border-t"> {/* Added border-t */}
                 <Button variant="ghost" size="icon" onClick={() => handleFavorite(attraction.id)} aria-label={`Favorite ${attraction.name}`}>
                   <Heart className="h-5 w-5 text-muted-foreground hover:text-destructive hover:fill-destructive" />
                 </Button>
