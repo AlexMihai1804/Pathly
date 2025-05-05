@@ -1,3 +1,4 @@
+
 import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
@@ -16,8 +17,15 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
+      {
+        protocol: 'https',
+        hostname: 'maps.googleapis.com',
+        port: '',
+        pathname: '/maps/api/place/photo**', // Allow specific path for photos
+      },
     ],
   },
 };
 
 export default nextConfig;
+
