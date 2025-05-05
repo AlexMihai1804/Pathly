@@ -15,11 +15,15 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const { auth } = getFirebase();
+  const { auth } = getFirebase(); // Ensure auth is initialized before use
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (!auth) {
+        setError('Authentication service is not ready.');
+        return;
+    }
     try {
       await signInWithEmailAndPassword(auth, email, password);
       // Auth state change will handle redirect
@@ -31,6 +35,10 @@ export default function LoginPage() {
 
   const handleGoogleLogin = async () => {
     setError(null);
+     if (!auth) {
+        setError('Authentication service is not ready.');
+        return;
+    }
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
@@ -45,6 +53,10 @@ export default function LoginPage() {
 
    const handleAnonymousLogin = async () => {
     setError(null);
+    if (!auth) {
+        setError('Authentication service is not ready.');
+        return;
+    }
     try {
       await signInAnonymously(auth);
       // Auth state change will handle redirect
