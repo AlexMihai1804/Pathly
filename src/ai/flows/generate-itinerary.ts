@@ -57,7 +57,8 @@ export async function generateItinerary(input: GenerateItineraryInput): Promise<
 const prompt = ai.definePrompt({
   name: 'generateItineraryPrompt',
   input: { schema: GenerateItineraryInputSchema },
-  output: { schema: GenerateItineraryOutputSchema },
+  // Removed output schema to rely on prompt instructions and manual parsing
+  // output: { schema: GenerateItineraryOutputSchema },
   prompt: `
     You are an expert travel planner. Your task is to create a logical and efficient daily itinerary for a vacation based on the user's destination, dates, and planned visits.
 
@@ -91,7 +92,7 @@ const prompt = ai.definePrompt({
     **Example Step (Travel):**
     { "type": "travel", "startTime": "12:30 PM", "durationMinutes": 20, "travelMode": "walk", "travelDetails": "Walk along the Seine" }
 
-    Generate the itinerary now based *only* on the provided planned visits. Ensure the output is a valid JSON object matching the GenerateItineraryOutputSchema.
+    Generate the itinerary now based *only* on the provided planned visits. Ensure the output is a valid JSON object with a single top-level key "days" whose value matches the structure described (an object mapping day labels to arrays of steps). Do not wrap the response in markdown code blocks.
   `,
 });
 
@@ -103,25 +104,49 @@ const generateItineraryFlow = ai.defineFlow< // Do not export the flow itself
   {
     name: 'generateItineraryFlow',
     inputSchema: GenerateItineraryInputSchema,
-    outputSchema: GenerateItineraryOutputSchema,
+    outputSchema: GenerateItineraryOutputSchema, // Keep the output schema for the flow itself
   },
   async (input) => {
      console.log("Calling generateItineraryPrompt with:", JSON.stringify(input, null, 2));
-    const { output } = await prompt(input);
-     console.log("Received output from prompt:", JSON.stringify(output, null, 2));
+    const response = await prompt(input); // Call the prompt without expecting structured output directly
+    const rawOutput = response.text; // Get the raw text output
 
-     if (!output) {
-        throw new Error("Itinerary generation failed to produce an output.");
-     }
-     // Additional validation could happen here if needed
-     // e.g., check if days object is empty, or if steps have valid durations
-     if (!output.days || Object.keys(output.days).length === 0) {
-         console.warn("Generated itinerary has no days or steps.");
-         // Depending on requirements, either throw error or return empty
-         // For now, return empty days if generation was technically successful but produced nothing
-         return { days: {} };
-     }
+    console.log("Received raw output from prompt:", rawOutput);
 
-    return output;
+    if (!rawOutput) {
+        throw new Error("Itinerary generation failed to produce any output.");
+    }
+
+    try {
+        // Attempt to parse the raw text as JSON
+        const parsedJson = JSON.parse(rawOutput);
+
+        // Validate the parsed JSON against the Zod schema
+        const validationResult = GenerateItineraryOutputSchema.safeParse(parsedJson);
+
+        if (!validationResult.success) {
+            console.error("Zod validation failed:", validationResult.error.errors);
+            throw new Error(`Generated itinerary failed schema validation: ${validationResult.error.message}`);
+        }
+
+        const output = validationResult.data; // Use the validated data
+
+        // Additional validation could happen here if needed
+        if (!output.days || Object.keys(output.days).length === 0) {
+            console.warn("Generated itinerary has no days or steps.");
+            // Depending on requirements, either throw error or return empty
+            return { days: {} };
+        }
+
+        return output;
+
+    } catch (e) {
+        console.error("Error parsing or validating itinerary JSON:", e);
+        if (e instanceof SyntaxError) {
+            throw new Error(`Failed to parse the generated itinerary as JSON. Raw output: ${rawOutput}`);
+        } else {
+            throw e; // Re-throw other errors (like validation errors)
+        }
+    }
   }
 );
