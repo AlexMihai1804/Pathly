@@ -224,14 +224,10 @@ export default function DiscoverPage() {
       }
   }, [nextPageToken, loadingMore, submittedSearchTerm, fetchRecommendations]); // isFetchingRef handled internally
 
-  // Effect to auto-load more if the view is empty
+  // Effect to auto-load more if the view is empty and not currently loading
   useEffect(() => {
-      // Check conditions:
-      // 1. Not currently loading initial recommendations OR loading more.
-      // 2. Filtered recommendations list is empty.
-      // 3. There's a next page token available.
       if (!loadingRecommendations && !loadingMore && filteredRecommendations.length === 0 && nextPageToken) {
-          console.log("Auto-loading more recommendations...");
+          console.log("Auto-loading more recommendations because the filtered list is empty.");
           handleLoadMore();
       }
   }, [filteredRecommendations, loadingRecommendations, loadingMore, nextPageToken, handleLoadMore]);
@@ -292,6 +288,7 @@ export default function DiscoverPage() {
       try {
           const snapshot = await getDocs(plannedVisitsQuery);
           if (isInPlan && !snapshot.empty) {
+               // This case should ideally not happen due to filtering, but handle defensively
                const docToDelete = snapshot.docs[0];
                await deleteDoc(doc(firestore, `users/${user.uid}/plannedVisits`, docToDelete.id));
                toast({ title: `${rec.name} removed from plan.` });
@@ -310,7 +307,10 @@ export default function DiscoverPage() {
                await setDoc(planDocRef, planData);
                 toast({ title: `${rec.name} added to plan!` });
           } else {
+               // This case handles potential state mismatch if filtering didn't catch an already planned item
+               // Or if an item was removed but still showing due to race condition
                console.warn("Inconsistent state between local plannedVisitIds and Firestore query result for:", locationId);
+               toast({ title: `Action for ${rec.name} could not be completed due to inconsistent state.`, variant: "destructive" });
           }
       } catch (error) {
           console.error("Error updating plan:", error);
@@ -601,3 +601,4 @@ export default function DiscoverPage() {
     </div>
   );
 }
+
