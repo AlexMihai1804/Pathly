@@ -1,4 +1,3 @@
-
 'use server';
 
 import { z } from 'zod';
@@ -8,7 +7,7 @@ import { z } from 'zod';
 const GetPlacesRecommendationsInputSchema = z.object({
   destination: z.string().describe('The desired vacation destination.'),
   // dates: z.string().describe('The vacation dates.'), // Currently unused by Places API query
-  interests: z.string().describe('The user interests, used for the search query.'),
+  interests: z.array(z.string()).min(1).describe('The user interests (array of strings), used for the search query.'), // Updated to array
 });
 
 export type GetPlacesRecommendationsInput = z.infer<typeof GetPlacesRecommendationsInputSchema>;
@@ -66,6 +65,8 @@ const mapPlaceTypesToTags = (types: string[]): string[] => {
     'amusement_park': 'entertainment',
     'movie_theater': 'entertainment',
     'night_club': 'entertainment',
+    'hiking_area': 'hiking', // Added hiking
+    'beach': 'beach', // Added beach
     // Add more mappings as needed
   };
   const tags = new Set<string>();
@@ -83,13 +84,10 @@ const mapPlaceTypesToTags = (types: string[]): string[] => {
 
 
 // Constructs the Google Places Photo URL
-// IMPORTANT: Requires API Key to be exposed client-side if used directly in component.
-// It's better to have the component call this server action which returns the full URL.
 const getPlacePhotoUrl = (photoReference: string | undefined, apiKey: string | undefined): string | undefined => {
   if (!photoReference || !apiKey) {
     return undefined;
   }
-  // Max width can be adjusted
   return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photoReference}&key=${apiKey}`;
 };
 
@@ -99,7 +97,6 @@ const getPlacePhotoUrl = (photoReference: string | undefined, apiKey: string | u
 export async function getPlacesRecommendations(
   input: GetPlacesRecommendationsInput
 ): Promise<GetPlacesRecommendationsOutput> {
-  // Read API key from environment variable
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
 
   if (!apiKey) {
@@ -107,19 +104,17 @@ export async function getPlacesRecommendations(
     throw new Error("Server configuration error: Missing Google Maps API Key.");
   }
 
-  // Validate input
   const validation = GetPlacesRecommendationsInputSchema.safeParse(input);
   if (!validation.success) {
       throw new Error(`Invalid input: ${validation.error.errors.map(e => e.message).join(', ')}`);
   }
   const { destination, interests } = validation.data;
 
-  // Construct the Places API Text Search query
-  const query = encodeURIComponent(`${interests} in ${destination}`);
-   // Request specific fields to potentially reduce cost and data size
-   const fields = 'place_id,name,formatted_address,types,photos,editorial_summary,business_status,rating,user_ratings_total';
-   // See: https://developers.google.com/maps/documentation/places/web-service/text-search
-   const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${apiKey}&fields=${fields}`;
+  // Construct the Places API Text Search query using interests array
+  const interestsQuery = interests.join(' OR '); // Combine interests for the query
+  const query = encodeURIComponent(`(${interestsQuery}) in ${destination}`);
+  const fields = 'place_id,name,formatted_address,types,photos,editorial_summary,business_status,rating,user_ratings_total';
+  const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${apiKey}&fields=${fields}`;
 
 
   try {
@@ -137,32 +132,26 @@ export async function getPlacesRecommendations(
         throw new Error(`Google Places API Error: ${data.status} - ${data.error_message || 'Unknown error'}`);
     }
 
-
-    // Transform results into the Recommendation format
     const recommendations: Recommendation[] = (data.results || []).map((place: any) => {
        const photoRef = place.photos?.[0]?.photo_reference;
-        // Use editorial summary if available, otherwise formatted address, fallback to types
        const description = place.editorial_summary?.overview || place.formatted_address || place.types?.join(', ') || 'Place of interest';
        const imageSearchHint = place.name ? place.name.toLowerCase().split(' ').slice(0, 2).join(' ') : 'attraction';
 
       return {
-        id: place.place_id, // Use place_id as the unique ID
+        id: place.place_id,
         name: place.name || 'Unknown Place',
         description: description,
-         // Construct the photo URL server-side to avoid exposing API key client-side
-         imageUrl: getPlacePhotoUrl(photoRef, apiKey),
-        // Use place name as a hint for image search if no photo available
+        imageUrl: getPlacePhotoUrl(photoRef, apiKey),
         imageSearchHint: imageSearchHint,
         tags: mapPlaceTypesToTags(place.types || []),
-        dataAiHint: imageSearchHint, // Add data-ai-hint
+        dataAiHint: imageSearchHint,
       };
-    }).filter((rec: Recommendation | null): rec is Recommendation => rec !== null); // Filter out any null results if mapping fails
+    }).filter((rec: Recommendation | null): rec is Recommendation => rec !== null);
 
     return { recommendations };
 
   } catch (error) {
     console.error("Error fetching from Google Places API:", error);
-    // Re-throw a generic error or the specific error
     throw new Error(`Failed to fetch recommendations: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }

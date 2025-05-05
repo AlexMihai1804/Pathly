@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
@@ -7,15 +6,14 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Heart, Plus, MapPin, Filter, BadgeAlert, ListPlus, X, Search as SearchIcon } from 'lucide-react'; // Added SearchIcon
+import { Heart, Plus, MapPin, Filter, BadgeAlert, ListPlus, X, Search as SearchIcon } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getFirebase } from '@/firebase';
 import { collection, query, where, getDocs, limit, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { VacationDetails, FavoriteLocation, PlannedVisit } from '@/firebase/types';
 import Image from 'next/image';
-import { getPlacesRecommendations } from '@/actions/get-places-recommendations'; // Import the server action
+import { getPlacesRecommendations } from '@/actions/get-places-recommendations';
 import { useToast } from "@/hooks/use-toast"
-
 
 import {
   DropdownMenu,
@@ -28,14 +26,13 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
-// Interface matching the structure returned by the server action
 interface Recommendation {
-    id: string;         // place_id from Google Places
+    id: string;
     name: string;
-    description: string; // Formatted address or summary
-    imageUrl?: string;   // Optional photo URL (constructed server-side)
-    imageSearchHint: string; // Fallback hint
-    tags: string[];     // Mapped from place types
+    description: string;
+    imageUrl?: string;
+    imageSearchHint: string;
+    tags: string[];
 }
 
 export default function DiscoverPage() {
@@ -45,14 +42,14 @@ export default function DiscoverPage() {
   const [vacations, setVacations] = useState<VacationDetails[]>([]);
   const [selectedVacation, setSelectedVacation] = useState<VacationDetails | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
-  const [favorites, setFavorites] = useState<Set<string>>(new Set()); // Store place_ids of favorited locations
-  const [plannedVisitIds, setPlannedVisitIds] = useState<Set<string>>(new Set()); // Store place_ids of planned locations
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [plannedVisitIds, setPlannedVisitIds] = useState<Set<string>>(new Set());
   const [loadingVacations, setLoadingVacations] = useState(true);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [submittedSearchTerm, setSubmittedSearchTerm] = useState<string | null>(null); // Track submitted search term
-  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set()); // Store active filter tags
+  const [submittedSearchTerm, setSubmittedSearchTerm] = useState<string | null>(null);
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const { firestore } = getFirebase();
 
   const allTags = useMemo(() => {
@@ -62,14 +59,12 @@ export default function DiscoverPage() {
   }, [recommendations]);
 
 
-  // Redirect if not logged in
   useEffect(() => {
     if (!authLoading && !user) {
       router.replace('/login');
     }
   }, [user, authLoading, router]);
 
-  // Fetch user's vacations
   useEffect(() => {
     if (user && firestore) {
       setLoadingVacations(true);
@@ -77,7 +72,6 @@ export default function DiscoverPage() {
       const unsubscribe = onSnapshot(vacationsQuery, (snapshot) => {
           const fetchedVacations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as VacationDetails));
           setVacations(fetchedVacations);
-           // If no vacation is selected or the selected one is deleted, select the first one
            if (!selectedVacation || !fetchedVacations.some(v => v.id === selectedVacation?.id)) {
                setSelectedVacation(fetchedVacations.length > 0 ? fetchedVacations[0] : null);
            }
@@ -87,32 +81,29 @@ export default function DiscoverPage() {
           setError("Failed to load vacation plans.");
           setLoadingVacations(false);
       });
-       return () => unsubscribe(); // Clean up listener
+       return () => unsubscribe();
     } else if (!authLoading && !user) {
-      setLoadingVacations(false); // Stop loading if user is confirmed absent
-      setSelectedVacation(null); // Clear selection if user logs out
+      setLoadingVacations(false);
+      setSelectedVacation(null);
       setVacations([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, firestore, authLoading]); // selectedVacation removed to prevent loop
+  }, [user, firestore, authLoading]); // Removed selectedVacation dependency
 
-   // Fetch favorites
-  useEffect(() => {
+   useEffect(() => {
     if (user && firestore) {
       const favoritesQuery = query(collection(firestore, `users/${user.uid}/favoriteLocations`));
       const unsubscribe = onSnapshot(favoritesQuery, (snapshot) => {
-        const favIds = new Set(snapshot.docs.map(doc => doc.id)); // locationId (place_id) is the doc id
+        const favIds = new Set(snapshot.docs.map(doc => doc.id));
         setFavorites(favIds);
       }, (error) => {
         console.error("Error fetching favorites:", error);
       });
-       return () => unsubscribe(); // Clean up listener
+       return () => unsubscribe();
     } else {
-       setFavorites(new Set()); // Clear favorites if no user
+       setFavorites(new Set());
     }
   }, [user, firestore]);
 
-   // Fetch planned visits for the *selected* vacation
    useEffect(() => {
      if (user && firestore && selectedVacation) {
        const plannedVisitsQuery = query(
@@ -125,29 +116,30 @@ export default function DiscoverPage() {
        }, (error) => {
          console.error("Error fetching planned visits:", error);
        });
-       return () => unsubscribe(); // Clean up listener
+       return () => unsubscribe();
      } else {
-       setPlannedVisitIds(new Set()); // Clear planned visits if no vacation selected or no user
+       setPlannedVisitIds(new Set());
      }
-   }, [user, firestore, selectedVacation]); // Re-run when selectedVacation changes
+   }, [user, firestore, selectedVacation]);
 
 
   // Fetch recommendations based on vacation details or submitted search term
   const fetchRecommendations = useCallback(async (searchQuery?: string) => {
-    // Use selectedVacation for destination context, even if searching
     if (selectedVacation && user) {
       setLoadingRecommendations(true);
       setError(null);
-      setRecommendations([]); // Clear previous recommendations
+      setRecommendations([]);
+
+      // Use search term if provided, otherwise use interests from selected vacation
+      const interestsToUse = searchQuery ? [searchQuery] : selectedVacation.interests;
 
       const input = {
         destination: selectedVacation.destination,
-        // Use search query if provided, otherwise default interests
-        interests: searchQuery ?? selectedVacation.interests,
+        interests: interestsToUse, // Pass the array of interests or the search query as an array
       };
 
       try {
-        const result = await getPlacesRecommendations(input); // Call the server action
+        const result = await getPlacesRecommendations(input);
         setRecommendations(result.recommendations);
       } catch (err) {
         console.error("Error fetching recommendations:", err);
@@ -156,44 +148,38 @@ export default function DiscoverPage() {
         setLoadingRecommendations(false);
       }
     } else {
-      setRecommendations([]); // Clear recommendations if no vacation selected
-      setLoadingRecommendations(false); // Ensure loading stops
+      setRecommendations([]);
+      setLoadingRecommendations(false);
     }
-  }, [selectedVacation, user]); // Dependencies for the fetch function itself
+  }, [selectedVacation, user]);
 
-  // Initial fetch when vacation changes
+  // Initial fetch when vacation changes or search term is cleared
   useEffect(() => {
-    if (selectedVacation && submittedSearchTerm === null) { // Only fetch based on vacation if no search is active
-        fetchRecommendations();
+    if (selectedVacation && submittedSearchTerm === null) {
+        fetchRecommendations(); // Fetch based on vacation details
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVacation, submittedSearchTerm]); // Re-run when selected vacation changes or search term is cleared
 
-  // Handle search form submission
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const termToSearch = searchTerm.trim();
     if (termToSearch) {
-       setSubmittedSearchTerm(termToSearch); // Set the submitted term
+       setSubmittedSearchTerm(termToSearch);
        fetchRecommendations(termToSearch); // Fetch based on search term
     } else {
-        // If search is cleared, revert to fetching based on vacation details
         setSubmittedSearchTerm(null);
-        fetchRecommendations();
+        fetchRecommendations(); // Revert to fetching based on vacation details
     }
   };
 
-  // Apply client-side filtering (e.g., by tags) AFTER recommendations are fetched
   const filteredRecommendations = useMemo(() => {
      let filtered = recommendations;
-
-      // Apply tag filters (search term filter is now handled by API call)
       if (activeFilters.size > 0) {
           filtered = filtered.filter(rec =>
               rec.tags.some(tag => activeFilters.has(tag))
           );
       }
-
      return filtered;
   }, [recommendations, activeFilters]);
 
@@ -212,7 +198,7 @@ export default function DiscoverPage() {
 
   const handleFavoriteToggle = async (rec: Recommendation) => {
       if (!user || !firestore) return;
-      const locationId = rec.id; // place_id
+      const locationId = rec.id;
       const isFavorited = favorites.has(locationId);
       const favRef = doc(firestore, `users/${user.uid}/favoriteLocations`, locationId);
 
@@ -221,25 +207,17 @@ export default function DiscoverPage() {
               await deleteDoc(favRef);
                toast({ title: `${rec.name} removed from favorites.` });
           } else {
-              const favData: Omit<FavoriteLocation, 'id' | 'imageUrl' | 'description' | 'dataAiHint'> & { // Ensure required fields match schema
-                 userId: string;
-                 locationId: string;
-                 name: string;
-                 imageUrl?: string; // Add optional fields if needed in Favorites
-                 description?: string;
-                 dataAiHint?: string;
-              } = { // Assuming 'id' is locationId
+              const favData: Omit<FavoriteLocation, 'id'> = { // Use Omit as ID is the doc key
                  userId: user.uid,
                  locationId: locationId,
-                 name: rec.name, // Denormalize name
-                 imageUrl: rec.imageUrl, // Optional: store image URL
-                 description: rec.description, // Optional: store description
-                 dataAiHint: rec.imageSearchHint // Optional: store hint
+                 name: rec.name,
+                 description: rec.description, // Store description
+                 imageUrl: rec.imageUrl, // Store image URL
+                 dataAiHint: rec.imageSearchHint // Store hint
               };
-              await setDoc(favRef, favData); // Use locationId (place_id) as doc ID
+              await setDoc(favRef, favData);
                toast({ title: `${rec.name} added to favorites!` });
           }
-          // Local state update is handled by the onSnapshot listener
       } catch (error) {
           console.error("Error updating favorite:", error);
            toast({ title: `Could not update favorite for ${rec.name}.`, variant: "destructive" });
@@ -248,28 +226,42 @@ export default function DiscoverPage() {
 
   const handlePlanToggle = async (rec: Recommendation) => {
       if (!user || !firestore || !selectedVacation) return;
-      const locationId = rec.id; // place_id
+      const locationId = rec.id;
       const isInPlan = plannedVisitIds.has(locationId);
-      // Generate a unique ID for the plan item, perhaps combining vacation and location ID
-       const planItemId = `${selectedVacation.id}_${locationId}`;
-      const planRef = doc(firestore, `users/${user.uid}/plannedVisits`, planItemId);
+      // Use a consistent query method to find the existing doc if it exists
+      const plannedVisitsQuery = query(
+         collection(firestore, `users/${user.uid}/plannedVisits`),
+         where('vacationId', '==', selectedVacation.id),
+         where('locationId', '==', locationId),
+         limit(1)
+       );
 
       try {
-          if (isInPlan) {
-               await deleteDoc(planRef);
+          const snapshot = await getDocs(plannedVisitsQuery);
+          if (isInPlan && !snapshot.empty) {
+               // Item exists, delete it
+               const docToDelete = snapshot.docs[0];
+               await deleteDoc(doc(firestore, `users/${user.uid}/plannedVisits`, docToDelete.id));
                toast({ title: `${rec.name} removed from plan.` });
-          } else {
-               const planData: Omit<PlannedVisit, 'id'> = { // Assuming 'id' will be planItemId
+          } else if (!isInPlan && snapshot.empty) {
+                // Item doesn't exist, add it
+               const planDocRef = doc(collection(firestore, `users/${user.uid}/plannedVisits`)); // Auto-generate ID
+               const planData: PlannedVisit = { // Ensure type includes id
+                   id: planDocRef.id, // Store the generated ID
                    userId: user.uid,
                    vacationId: selectedVacation.id,
                    locationId: locationId,
-                   locationName: rec.name, // Denormalize
-                   locationImageUrl: rec.imageUrl || `https://picsum.photos/seed/${locationId}/200/200`, // Use API image or placeholder
-                   description: rec.description, // Denormalize description
-                   dataAiHint: rec.imageSearchHint, // Store hint
+                   locationName: rec.name,
+                   locationImageUrl: rec.imageUrl || `https://picsum.photos/seed/${locationId}/200/200`,
+                   description: rec.description,
+                   dataAiHint: rec.imageSearchHint,
                };
-               await setDoc(planRef, planData);
+               await setDoc(planDocRef, planData);
                 toast({ title: `${rec.name} added to plan!` });
+          } else {
+               // Inconsistent state, log warning
+               console.warn("Inconsistent state between local plannedVisitIds and Firestore query result for:", locationId);
+               // Optionally force refresh local state
           }
           // Local state update handled by onSnapshot listener
       } catch (error) {
@@ -355,8 +347,9 @@ export default function DiscoverPage() {
                    checked={selectedVacation?.id === vacation.id}
                    onCheckedChange={() => {
                        setSelectedVacation(vacation);
-                       setSubmittedSearchTerm(null); // Reset search when switching vacation
-                       setSearchTerm(''); // Clear search input
+                       setSubmittedSearchTerm(null);
+                       setSearchTerm('');
+                       setActiveFilters(new Set()); // Reset filters when switching vacation
                    }}
                    className="truncate"
                  >
@@ -404,7 +397,7 @@ export default function DiscoverPage() {
                    key={tag}
                    checked={activeFilters.has(tag)}
                    onCheckedChange={() => handleFilterToggle(tag)}
-                   className="capitalize" // Capitalize first letter for display
+                   className="capitalize"
                  >
                    {tag}
                  </DropdownMenuCheckboxItem>
@@ -421,7 +414,6 @@ export default function DiscoverPage() {
          </DropdownMenu>
       </form>
 
-       {/* Active Filters Display */}
         {activeFilters.size > 0 && (
             <div className="flex flex-wrap gap-1">
                 {Array.from(activeFilters).map(tag => (
@@ -461,17 +453,16 @@ export default function DiscoverPage() {
               <CardHeader className="p-0 relative aspect-video overflow-hidden bg-muted">
                 {rec.imageUrl ? (
                     <Image
-                      src={rec.imageUrl} // Use the URL from Google Places API
+                      src={rec.imageUrl}
                       alt={rec.name}
                       layout="fill"
                       objectFit="cover"
                       data-ai-hint={rec.imageSearchHint}
                       className="transition-transform duration-300 ease-in-out group-hover:scale-105"
-                      unoptimized // Consider if optimization is needed/possible with Maps API URLs
-                       // Add error handling for images
+                      unoptimized
                        onError={(e) => {
                            const target = e.target as HTMLImageElement;
-                           target.src = `https://picsum.photos/seed/${rec.id}/400/300`; // Fallback placeholder
+                           target.src = `https://picsum.photos/seed/${rec.id}/400/300`;
                            target.alt = `${rec.name} (Placeholder Image)`;
                          }}
                     />
@@ -535,5 +526,3 @@ export default function DiscoverPage() {
     </div>
   );
 }
-
-    
