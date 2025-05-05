@@ -3,14 +3,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { getFirebase } from '@/firebase';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, limit } from 'firebase/firestore'; // Import limit
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRouter } from 'next/navigation';
 import { VacationDetails } from '@/firebase/types';
 import { generateLocationRecommendations, GenerateLocationRecommendationsInput } from '@/ai/flows/generate-location-recommendations';
-// Removed AuthProvider import as it's now global
 
 
 function RecommendationsContent() {
