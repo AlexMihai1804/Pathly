@@ -2,12 +2,13 @@
 // IMPORTANT: Ensure your Firebase project configuration is set in .env
 // These variables are read during the build process and automatically available client-side.
 export const firebaseConfig = {
-  apiKey: "AIzaSyBsmfiOhzebAdjho3-5AJj2pmaZY2LxwBw", // Hardcoded based on user input
-  authDomain: "pathly-b50d6.firebaseapp.com",
-  projectId: "pathly-b50d6", // Hardcoded based on user input
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  apiKey: "AIzaSyD5r9XnnQtwKNj9Mi9doUGoPaXd_njrni4", // User provided API key
+  authDomain: "pathly-b50d6.firebaseapp.com", // User provided Auth Domain
+  projectId: "pathly-b50d6", // User provided Project ID
+  storageBucket: "pathly-b50d6.appspot.com", // Default convention
+  messagingSenderId: "46465501", // User provided Sender ID
+  appId: "1:46465501:web:730cbec923544c0d8db634", // User provided App ID
+  measurementId: "G-CCDTP8N1H3" // User provided Measurement ID
 };
 
 // Basic validation to ensure essential environment variables are loaded

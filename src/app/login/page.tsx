@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useState } from 'react';
@@ -21,11 +22,13 @@ export default function LoginPage() {
      console.error(`${method} login error:`, err);
      if (err.code === AuthErrorCodes.NETWORK_REQUEST_FAILED) {
        setError('Network error. Please check your internet connection and try again.');
-     } else if (err.code === AuthErrorCodes.INVALID_API_KEY) {
-        setError('Invalid Firebase API Key. Please check your configuration.');
+     } else if (err.code === AuthErrorCodes.INVALID_API_KEY || err.message.includes('api-key-not-valid')) { // Check specific message too
+        setError('Invalid Firebase API Key. Please double-check your configuration.');
      } else if (err.code === AuthErrorCodes.POPUP_CLOSED_BY_USER || err.code === 'auth/cancelled-popup-request') {
          // Don't show an error message if the user intentionally closed the popup
          setError(null);
+     } else if (err.code === AuthErrorCodes.UNAUTHORIZED_DOMAIN) {
+        setError(`Error: This domain (${window.location.origin}) is not authorized for ${method} sign-in. Please add it to your Firebase project's authorized domains.`);
      }
       else {
        setError(err.message || `Failed to sign in with ${method}.`);
@@ -54,6 +57,8 @@ export default function LoginPage() {
         setError('Authentication service is not ready.');
         return;
     }
+     // Log the origin before attempting the popup
+     console.log("Attempting Google Sign-In from origin:", window.location.origin);
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
