@@ -109,7 +109,7 @@ const generateItineraryFlow = ai.defineFlow< // Do not export the flow itself
   async (input) => {
      console.log("Calling generateItineraryPrompt with:", JSON.stringify(input, null, 2));
     const response = await prompt(input); // Call the prompt without expecting structured output directly
-    const rawOutput = response.text; // Get the raw text output
+    let rawOutput = response.text; // Get the raw text output
 
     console.log("Received raw output from prompt:", rawOutput);
 
@@ -118,7 +118,16 @@ const generateItineraryFlow = ai.defineFlow< // Do not export the flow itself
     }
 
     try {
-        // Attempt to parse the raw text as JSON
+        // Strip markdown code block fences if present
+        if (rawOutput.startsWith('```json') && rawOutput.endsWith('```')) {
+            rawOutput = rawOutput.substring(7, rawOutput.length - 3).trim();
+            console.log("Stripped markdown fences. New raw output:", rawOutput);
+        } else if (rawOutput.startsWith('```') && rawOutput.endsWith('```')) {
+             rawOutput = rawOutput.substring(3, rawOutput.length - 3).trim();
+              console.log("Stripped markdown fences. New raw output:", rawOutput);
+        }
+
+        // Attempt to parse the potentially cleaned text as JSON
         const parsedJson = JSON.parse(rawOutput);
 
         // Validate the parsed JSON against the Zod schema
