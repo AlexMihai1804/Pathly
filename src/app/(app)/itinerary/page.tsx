@@ -21,7 +21,7 @@ interface GeneratedItinerary {
 export default function ItineraryPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const { toast } } from useToast();
+  const { toast } = useToast();
   const [vacations, setVacations] = useState<VacationDetails[]>([]);
   const [selectedVacation, setSelectedVacation] = useState<VacationDetails | null>(null);
   const [plannedItems, setPlannedItems] = useState<PlannedVisit[]>([]);
@@ -62,6 +62,7 @@ export default function ItineraryPage() {
         setVacations([]);
         setSelectedVacation(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, firestore, authLoading]); // Removed selectedVacation
 
   // Fetch planned items for the selected vacation
