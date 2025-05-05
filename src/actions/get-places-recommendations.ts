@@ -13,6 +13,17 @@ const GetPlacesRecommendationsInputSchema = z.object({
 
 export type GetPlacesRecommendationsInput = z.infer<typeof GetPlacesRecommendationsInputSchema>;
 
+// Interface matching the structure expected by the Discover page component
+interface Recommendation {
+    id: string;         // place_id from Google Places
+    name: string;
+    description: string; // Formatted address or summary
+    imageUrl?: string;   // Optional photo URL (constructed server-side)
+    imageSearchHint: string; // Fallback hint
+    tags: string[];     // Mapped from place types
+    dataAiHint?: string; // Added for consistency
+}
+
 // Matches the structure expected by the Discover page component
 const RecommendationSchema = z.object({
     id: z.string().describe("A unique identifier for the location (using place_id)."),
@@ -21,7 +32,9 @@ const RecommendationSchema = z.object({
     imageUrl: z.string().url().optional().describe("URL for an image of the location."), // Use optional for now
     imageSearchHint: z.string().describe("Keywords for searching an image (uses place name)."),
     tags: z.array(z.string()).describe("Relevant tags derived from place types (e.g., ['museum', 'park', 'restaurant'])."),
+    dataAiHint: z.string().optional().describe("AI hint for image generation/search."),
 });
+
 
 const GetPlacesRecommendationsOutputSchema = z.object({
   recommendations: z.array(RecommendationSchema).describe('A list of recommended locations from Google Places API.'),
@@ -86,10 +99,11 @@ const getPlacePhotoUrl = (photoReference: string | undefined, apiKey: string | u
 export async function getPlacesRecommendations(
   input: GetPlacesRecommendationsInput
 ): Promise<GetPlacesRecommendationsOutput> {
+  // Read API key from environment variable
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
 
   if (!apiKey) {
-    console.error("Google Maps API Key is missing.");
+    console.error("Google Maps API Key is missing from environment variables (GOOGLE_MAPS_API_KEY).");
     throw new Error("Server configuration error: Missing Google Maps API Key.");
   }
 
@@ -129,6 +143,7 @@ export async function getPlacesRecommendations(
        const photoRef = place.photos?.[0]?.photo_reference;
         // Use editorial summary if available, otherwise formatted address, fallback to types
        const description = place.editorial_summary?.overview || place.formatted_address || place.types?.join(', ') || 'Place of interest';
+       const imageSearchHint = place.name ? place.name.toLowerCase().split(' ').slice(0, 2).join(' ') : 'attraction';
 
       return {
         id: place.place_id, // Use place_id as the unique ID
@@ -137,8 +152,9 @@ export async function getPlacesRecommendations(
          // Construct the photo URL server-side to avoid exposing API key client-side
          imageUrl: getPlacePhotoUrl(photoRef, apiKey),
         // Use place name as a hint for image search if no photo available
-        imageSearchHint: place.name ? place.name.toLowerCase().split(' ').slice(0, 2).join(' ') : 'attraction',
+        imageSearchHint: imageSearchHint,
         tags: mapPlaceTypesToTags(place.types || []),
+        dataAiHint: imageSearchHint, // Add data-ai-hint
       };
     }).filter((rec: Recommendation | null): rec is Recommendation => rec !== null); // Filter out any null results if mapping fails
 
