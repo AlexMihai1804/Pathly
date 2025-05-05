@@ -49,7 +49,7 @@ export default function LoginPage() {
       await signInAnonymously(auth);
       // Auth state change will handle redirect
     } catch (err: any) {
-      console.error("Anonymous login error:", err);
+      console.error("Anonymous login error:", err); // Log the specific error
       setError(err.message || 'Failed to sign in anonymously.');
     }
   };
