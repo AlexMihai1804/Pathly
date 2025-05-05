@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read access to location recommendations for everyone.
+    match /locationRecommendations/{locationRecommendationId} {
+      allow read: if true;
+    }
+
+    // Rules for user profiles.
+    match /users/{userId} {
+      // Allow users to read their own profile.
+      allow get: if request.auth != null && request.auth.uid == userId;
+
+      // Allow users to create their own profile.
+      // The id field must match their UID.
+      allow create: if request.auth != null && request.auth.uid == userId && request.resource.data.id == request.auth.uid;
+
+      // Allow users to update their own profile.
+      allow update: if request.auth != null && request.auth.uid == userId;
+
+      // Disallow delete.
+      allow delete: if false;
+
+       // Rules for favorite locations subcollection
+       match /favoriteLocations/{locationId} {
+          // Allow read access to favorite locations if the user is authenticated and owns the location.
+          allow get: if request.auth != null && request.auth.uid == userId;
+
+          // Allow create access if the user is authenticated and the user id matches the parent user id.
+          allow create: if request.auth != null && request.auth.uid == userId && request.resource.data.userId == userId;
+
+          // Allow update access if the user is authenticated and owns the location.
+          allow update: if request.auth != null && request.auth.uid == userId && request.resource.data.userId == userId;
+
+          // Allow delete access if the user is authenticated and owns the location.
+          allow delete: if request.auth != null && request.auth.uid == userId;
+        }
+    }
+
+    // Rules for vacation details.
+    match /vacationDetails/{vacationDetailsId} {
+      // Allow read access if the user is authenticated and the vacation detail belongs to them.
+      allow get: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.id == resource.data.userId;
+
+      // Allow create access if the user is authenticated and the vacation detail belongs to them.
+      allow create: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.id == request.resource.data.userId;
+
+      // Allow update access if the user is authenticated and the vacation detail belongs to them.
+      allow update: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.id == resource.data.userId;
+
+      // Allow delete access if the user is authenticated and the vacation detail belongs to them.
+      allow delete: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.id == resource.data.userId;
+    }
+  }
+}

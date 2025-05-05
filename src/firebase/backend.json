@@ -1,0 +1,201 @@
+{
+  "entities": {
+    "User": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "User",
+      "description": "Represents a user of the Pathly application.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the User entity. The specific format and generation strategy depend on the target database implementation."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "The user's email address used for authentication."
+        }
+      },
+      "required": [
+        "id",
+        "email"
+      ]
+    },
+    "VacationDetails": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VacationDetails",
+      "description": "Represents the details of a user's planned vacation.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the VacationDetails entity. The specific format and generation strategy depend on the target database implementation."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Reference to the unique identifier of the related User entity. (Relationship: User 1:N VacationDetails)"
+        },
+        "destination": {
+          "type": "string",
+          "description": "The destination of the vacation."
+        },
+        "dates": {
+          "type": "string",
+          "description": "The dates of the vacation."
+        },
+        "interests": {
+          "type": "string",
+          "description": "The interests of the user for the vacation."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "destination",
+        "dates",
+        "interests"
+      ]
+    },
+    "LocationRecommendation": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "LocationRecommendation",
+      "description": "Represents a recommended location for a user to visit.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the LocationRecommendation entity. The specific format and generation strategy depend on the target database implementation."
+        },
+        "name": {
+          "type": "string",
+          "description": "The name of the recommended location."
+        },
+        "shortDescription": {
+          "type": "string",
+          "description": "A short description of the recommended location."
+        },
+        "pictures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "An array of URLs pointing to pictures of the recommended location."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "shortDescription",
+        "pictures"
+      ]
+    },
+    "FavoriteLocation": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "FavoriteLocation",
+      "description": "Represents a location that a user has saved as a favorite.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the FavoriteLocation entity. The specific format and generation strategy depend on the target database implementation."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Reference to the unique identifier of the related User entity. (Relationship: User 1:N FavoriteLocations)"
+        },
+        "locationId": {
+          "type": "string",
+          "description": "Reference to the unique identifier of the related LocationRecommendation entity. (Relationship: LocationRecommendation 1:N FavoriteLocations)"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "locationId"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "google.com",
+      "anonymous"
+    ],
+    "rationales": {
+      "providers": "The user explicitly requested email authentication. Password authentication covers this.  Google authentication is added as a common convenient option. Anonymous Auth covers users who may want to explore the app without full registration. "
+    }
+  },
+  "firestore": {
+    "structure": [
+      {
+        "definition": {
+          "description": "Collection containing user profile documents.",
+          "entityName": "User",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "params": [
+            {
+              "description": "The unique ID of the user.",
+              "name": "userId"
+            }
+          ]
+        },
+        "path": "/users/{userId}"
+      },
+      {
+        "definition": {
+          "description": "Collection containing vacation details documents.",
+          "entityName": "VacationDetails",
+          "schema": {
+            "$ref": "#/backend/entities/VacationDetails"
+          },
+          "params": [
+            {
+              "description": "The unique ID of the vacation details.",
+              "name": "vacationDetailsId"
+            }
+          ]
+        },
+        "path": "/vacationDetails/{vacationDetailsId}"
+      },
+      {
+        "definition": {
+          "description": "Collection containing location recommendation documents.",
+          "entityName": "LocationRecommendation",
+          "schema": {
+            "$ref": "#/backend/entities/LocationRecommendation"
+          },
+          "params": [
+            {
+              "description": "The unique ID of the location recommendation.",
+              "name": "locationRecommendationId"
+            }
+          ]
+        },
+        "path": "/locationRecommendations/{locationRecommendationId}"
+      },
+      {
+        "definition": {
+          "description": "Subcollection containing favorite locations for a specific user.",
+          "entityName": "FavoriteLocation",
+          "schema": {
+            "$ref": "#/backend/entities/FavoriteLocation"
+          },
+          "params": [
+            {
+              "description": "The unique ID of the user.",
+              "name": "userId"
+            },
+            {
+              "description": "The unique ID of the location.",
+              "name": "locationId"
+            }
+          ]
+        },
+        "path": "/users/{userId}/favoriteLocations/{locationId}"
+      }
+    ],
+    "reasoning": "Based on the entities and application proposal, the following Firestore collections are recommended:\n\n*   **/users/{userId}**: This collection stores user profile information, including email. The `userId` will be used as the document ID.  Email authentication is a core feature.\n*   **/vacationDetails/{vacationDetailsId}**: This collection stores vacation details provided by users.  Each document will contain information like destination, dates, and interests. The `vacationDetailsId` will be used as the document ID.  A `userId` field will link each vacation detail document to the user who created it.\n*   **/locationRecommendations/{locationRecommendationId}**: This collection stores location recommendations.  Each document will contain information like the name, short description, and pictures of a location. The `locationRecommendationId` will be used as the document ID.\n*   **/users/{userId}/favoriteLocations/{locationId}**: This subcollection stores the user's favorite locations, linked to both the user and the recommended location. This creates a 1:N relationship between users and their favorite locations.  Using the `locationId` as the document ID makes querying favorites for a user easier."
+  }
+}
