@@ -1,4 +1,3 @@
-
 'use client';
 
 import React from 'react';
@@ -19,7 +18,7 @@ const NavItem: React.FC<NavItemProps> = ({ href, icon: Icon, label }) => {
 
   return (
     <button
-      onClick={() => router.push(href)}
+      onClick={() => router.push(href)} // This should handle navigation
       className={cn(
         'flex flex-col items-center justify-center flex-1 px-2 py-2 text-xs transition-colors duration-200 ease-in-out focus:outline-none',
         isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
