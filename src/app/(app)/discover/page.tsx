@@ -43,7 +43,7 @@ export default function DiscoverPage() {
   const [selectedVacation, setSelectedVacation] = useState<VacationDetails | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
-  const [plannedVisitIds, setPlannedVisitIds] = useState<Set<string>>(new Set());
+  const [plannedVisitIds, setPlannedVisitIds] = useState<Set<string>>(new Set()); // Stores locationIds in the current plan
   const [loadingVacations, setLoadingVacations] = useState(true);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +56,7 @@ export default function DiscoverPage() {
 
   const allTags = useMemo(() => {
       const tags = new Set<string>();
+      // Use recommendations directly to get all possible tags before filtering
       recommendations.forEach(rec => rec.tags.forEach(tag => tags.add(tag)));
       return Array.from(tags).sort();
   }, [recommendations]);
@@ -95,7 +96,7 @@ export default function DiscoverPage() {
     if (user && firestore) {
       const favoritesQuery = query(collection(firestore, `users/${user.uid}/favoriteLocations`));
       const unsubscribe = onSnapshot(favoritesQuery, (snapshot) => {
-        const favIds = new Set(snapshot.docs.map(doc => doc.id));
+        const favIds = new Set(snapshot.docs.map(doc => doc.id)); // Favorites use locationId as doc ID
         setFavorites(favIds);
       }, (error) => {
         console.error("Error fetching favorites:", error);
@@ -106,6 +107,7 @@ export default function DiscoverPage() {
     }
   }, [user, firestore]);
 
+   // Fetch planned visit IDs for the selected vacation
    useEffect(() => {
      if (user && firestore && selectedVacation) {
        const plannedVisitsQuery = query(
@@ -113,14 +115,14 @@ export default function DiscoverPage() {
          where('vacationId', '==', selectedVacation.id)
        );
        const unsubscribe = onSnapshot(plannedVisitsQuery, (snapshot) => {
-         const visitIds = new Set(snapshot.docs.map(doc => (doc.data() as PlannedVisit).locationId));
+         const visitIds = new Set(snapshot.docs.map(doc => (doc.data() as PlannedVisit).locationId)); // Get locationIds
          setPlannedVisitIds(visitIds);
        }, (error) => {
          console.error("Error fetching planned visits:", error);
        });
        return () => unsubscribe();
      } else {
-       setPlannedVisitIds(new Set());
+       setPlannedVisitIds(new Set()); // Clear planned IDs if no vacation/user
      }
    }, [user, firestore, selectedVacation]);
 
@@ -203,15 +205,22 @@ export default function DiscoverPage() {
     }
   };
 
+  // Filter recommendations based on active tags AND exclude items already in the plan
   const filteredRecommendations = useMemo(() => {
-     let filtered = recommendations;
-      if (activeFilters.size > 0) {
-          filtered = filtered.filter(rec =>
-              rec.tags.some(tag => activeFilters.has(tag))
-          );
-      }
-     return filtered;
-  }, [recommendations, activeFilters]);
+    let filtered = recommendations;
+
+    // Filter by active tags
+    if (activeFilters.size > 0) {
+      filtered = filtered.filter(rec =>
+        rec.tags.some(tag => activeFilters.has(tag))
+      );
+    }
+
+    // Filter out items already in the plan
+    filtered = filtered.filter(rec => !plannedVisitIds.has(rec.id));
+
+    return filtered;
+  }, [recommendations, activeFilters, plannedVisitIds]); // Add plannedVisitIds dependency
 
 
   const handleFilterToggle = (tag: string) => {
@@ -248,6 +257,7 @@ export default function DiscoverPage() {
               await setDoc(favRef, favData);
                toast({ title: `${rec.name} added to favorites!` });
           }
+           // State updates via listener
       } catch (error) {
           console.error("Error updating favorite:", error);
            toast({ title: `Could not update favorite for ${rec.name}.`, variant: "destructive" });
@@ -258,6 +268,7 @@ export default function DiscoverPage() {
       if (!user || !firestore || !selectedVacation) return;
       const locationId = rec.id;
       const isInPlan = plannedVisitIds.has(locationId);
+
       // Use a consistent query method to find the existing doc if it exists
       const plannedVisitsQuery = query(
          collection(firestore, `users/${user.uid}/plannedVisits`),
@@ -530,12 +541,12 @@ export default function DiscoverPage() {
                       favorites.has(rec.id) ? "text-destructive fill-destructive" : "hover:text-destructive hover:fill-destructive/50"
                    )} />
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => handlePlanToggle(rec)} aria-label={`Add ${rec.name} to plan`}>
-                   <ListPlus className={cn(
-                     "h-5 w-5 text-muted-foreground transition-colors",
-                     plannedVisitIds.has(rec.id) ? "text-primary" : "hover:text-primary"
-                     )} />
-                 </Button>
+                 {/* Show Add to Plan button only if not already planned */}
+                 {!plannedVisitIds.has(rec.id) && (
+                    <Button variant="ghost" size="icon" onClick={() => handlePlanToggle(rec)} aria-label={`Add ${rec.name} to plan`}>
+                       <ListPlus className="h-5 w-5 text-muted-foreground transition-colors hover:text-primary" />
+                    </Button>
+                 )}
               </CardFooter>
             </Card>
            ))}
@@ -563,9 +574,9 @@ export default function DiscoverPage() {
        ) : (
         <Card className="col-span-full">
             <CardContent className="p-6 text-center text-muted-foreground">
-              {recommendations.length === 0 && !submittedSearchTerm && activeFilters.size === 0
+              {recommendations.length === 0 && !submittedSearchTerm && activeFilters.size === 0 && plannedVisitIds.size === 0
                 ? "No recommendations found based on your vacation details."
-                : "No recommendations match your current search or filters."
+                : "No more recommendations match your current search or filters."
               }
               {activeFilters.size > 0 && (
                  <Button variant="link" onClick={() => setActiveFilters(new Set())} className="p-1 text-sm">
